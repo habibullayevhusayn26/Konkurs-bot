@@ -7,6 +7,7 @@
     <title>NFT Gift Referral</title>
     <link rel="stylesheet" href="/style.css">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script defer src="/lottie.min.js"></script>
     <script defer src="/app.js"></script>
   </head>
   <body>
@@ -17,6 +18,21 @@
         <h1>Do‘stlarni taklif qiling,<br>gift yutib oling</h1>
         <p class="subtitle">Do‘stingiz botni ishga tushirib, majburiy kanallarga obuna bo‘lgach taklifingiz hisoblanadi.</p>
       </header>
+
+      <section class="prizes-section" aria-labelledby="prizes-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">HAQIQIY TELEGRAM SOVG‘ALARI</p>
+            <h2 id="prizes-title">Yutib olish mumkin</h2>
+          </div>
+          <span class="catalog-count" id="gift-count">—</span>
+        </div>
+        <p class="catalog-description">Telegram’da collectible ko‘rinishga yangilanishi mumkin bo‘lgan sovg‘alar. Sovg‘a rasmi va mavjudligi Telegram’dan olinadi.</p>
+        <div class="gift-grid" id="gift-grid" aria-live="polite">
+          <p class="catalog-message">Haqiqiy sovg‘alar yuklanmoqda…</p>
+        </div>
+        <p class="catalog-footnote">NFT sovg‘asining yakuniy modeli, belgisi, foni va seriya raqami sovg‘a topshirilganda aniqlanadi.</p>
+      </section>
 
       <section class="progress-card" aria-live="polite">
         <div class="stats-row">

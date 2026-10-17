@@ -25,6 +25,9 @@ if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
   throw new Error('PORT must be an integer between 1 and 65535.');
 }
 const WEB_APP_URL = process.env.WEB_APP_URL || '';
+const GIFT_CATALOG_CACHE_MS = 15 * 60 * 1000;
+const GIFT_STICKER_CACHE_LIMIT = 32 * 1024 * 1024;
+const MAX_GIFT_STICKER_SIZE = 10 * 1024 * 1024;
 if (WEB_APP_URL) {
   let parsedUrl;
   try {
@@ -45,6 +48,11 @@ const bot = new Telegraf(BOT_TOKEN);
 const ownerSessions = new Map();
 let collections;
 let botUsername;
+let giftCatalogCache = { expiresAt: 0, gifts: [], error: null };
+let giftCatalogRequest;
+const giftStickerCache = new Map();
+const giftStickerRequests = new Map();
+let giftStickerCacheSize = 0;
 
 async function initializeDatabase() {
   await mongoClient.connect();
@@ -185,6 +193,119 @@ async function ensureCampaignUser(user, referralPayload = '') {
 async function getReferralThreshold() {
   const setting = await collections.config.findOne({ _id: 'referral_threshold' });
   return setting ? setting.value : null;
+}
+
+async function getCollectibleGiftCatalog() {
+  if (giftCatalogCache.expiresAt > Date.now()) {
+    if (giftCatalogCache.error) throw new Error(giftCatalogCache.error);
+    return giftCatalogCache.gifts;
+  }
+  if (giftCatalogRequest) return giftCatalogRequest;
+
+  giftCatalogRequest = (async () => {
+    try {
+      const result = await bot.telegram.callApi('getAvailableGifts', {});
+      if (!result || !Array.isArray(result.gifts)) {
+        throw new Error('Telegram returned an invalid available-gifts response.');
+      }
+
+      const gifts = result.gifts
+        .filter((gift) => Number.isInteger(gift.upgrade_star_count)
+          && gift.upgrade_star_count > 0
+          && (!Number.isInteger(gift.remaining_count) || gift.remaining_count > 0))
+        .map((gift) => ({
+          id: gift.id,
+          name: typeof gift.name === 'string' && gift.name
+            ? gift.name
+            : `Telegram sovg‘asi #${gift.id.slice(-5)}`,
+          starCount: gift.star_count,
+          upgradeStarCount: gift.upgrade_star_count,
+          totalCount: Number.isInteger(gift.total_count) ? gift.total_count : null,
+          remainingCount: Number.isInteger(gift.remaining_count) ? gift.remaining_count : null,
+          emoji: gift.sticker.emoji || '🎁',
+          stickerFileId: gift.sticker.file_id,
+          stickerIsVideo: Boolean(gift.sticker.is_video),
+          stickerIsAnimated: Boolean(gift.sticker.is_animated),
+        }));
+
+      giftCatalogCache = { expiresAt: Date.now() + GIFT_CATALOG_CACHE_MS, gifts, error: null };
+      return gifts;
+    } catch (error) {
+      giftCatalogCache = {
+        expiresAt: Date.now() + 60 * 1000,
+        gifts: [],
+        error: error.message,
+      };
+      throw error;
+    }
+  })();
+  try {
+    return await giftCatalogRequest;
+  } finally {
+    giftCatalogRequest = null;
+  }
+}
+
+async function getGiftSticker(gift) {
+  const cached = giftStickerCache.get(gift.id);
+  if (cached && cached.expiresAt > Date.now()) {
+    giftStickerCache.delete(gift.id);
+    giftStickerCache.set(gift.id, cached);
+    return cached;
+  }
+  if (cached) {
+    giftStickerCache.delete(gift.id);
+    giftStickerCacheSize -= cached.sticker.length;
+  }
+  if (giftStickerRequests.has(gift.id)) return giftStickerRequests.get(gift.id);
+
+  const request = (async () => {
+    const file = await bot.telegram.getFile(gift.stickerFileId);
+    if (!file.file_path) throw new Error(`Telegram did not return a file path for gift ${gift.id}.`);
+    const extension = path.extname(file.file_path).toLowerCase();
+    const contentTypes = {
+      '.webp': 'image/webp',
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.tgs': 'application/x-tgsticker',
+      '.webm': 'video/webm',
+    };
+    const contentType = contentTypes[extension];
+    if (!contentType) throw new Error(`Telegram returned an unsupported sticker type for gift ${gift.id}.`);
+
+    const fileUrl = await bot.telegram.getFileLink(file);
+    const response = await fetch(fileUrl);
+    if (!response.ok) {
+      throw new Error(`Could not download the Telegram gift sticker (${response.status}).`);
+    }
+    const contentLength = Number(response.headers.get('content-length') || 0);
+    if (contentLength > MAX_GIFT_STICKER_SIZE) {
+      throw new Error(`Telegram gift sticker is unexpectedly large (${gift.id}).`);
+    }
+    const sticker = Buffer.from(await response.arrayBuffer());
+    if (sticker.length > MAX_GIFT_STICKER_SIZE) {
+      throw new Error(`Telegram gift sticker is unexpectedly large (${gift.id}).`);
+    }
+
+    const result = { sticker, contentType, expiresAt: Date.now() + 60 * 60 * 1000 };
+    if (sticker.length <= GIFT_STICKER_CACHE_LIMIT) {
+      while (giftStickerCache.size && giftStickerCacheSize + sticker.length > GIFT_STICKER_CACHE_LIMIT) {
+        const [oldestId, oldest] = giftStickerCache.entries().next().value;
+        giftStickerCache.delete(oldestId);
+        giftStickerCacheSize -= oldest.sticker.length;
+      }
+      giftStickerCache.set(gift.id, result);
+      giftStickerCacheSize += sticker.length;
+    }
+    return result;
+  })();
+  giftStickerRequests.set(gift.id, request);
+  try {
+    return await request;
+  } finally {
+    giftStickerRequests.delete(gift.id);
+  }
 }
 
 async function createRewardIfEligible(userId) {
@@ -395,10 +516,32 @@ const staticFiles = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
   '/style.css': ['style.css', 'text/css; charset=utf-8'],
+  '/lottie.min.js': [
+    path.join(__dirname, 'node_modules', 'lottie-web', 'build', 'player', 'lottie.min.js'),
+    'text/javascript; charset=utf-8',
+  ],
 };
 
 async function handleHttpRequest(req, res) {
   const requestUrl = new URL(req.url, 'http://localhost');
+  const giftStickerMatch = /^\/api\/gifts\/([^/]+)\/sticker$/.exec(requestUrl.pathname);
+  if (giftStickerMatch && req.method === 'GET') {
+    const giftId = decodeURIComponent(giftStickerMatch[1]);
+    const gift = (await getCollectibleGiftCatalog()).find((entry) => entry.id === giftId);
+    if (!gift) {
+      res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+      res.end('Gift not found');
+      return;
+    }
+    const { sticker, contentType } = await getGiftSticker(gift);
+    res.writeHead(200, {
+      'content-type': contentType,
+      'cache-control': 'public, max-age=86400, immutable',
+      'x-content-type-options': 'nosniff',
+    });
+    res.end(sticker);
+    return;
+  }
   if (requestUrl.pathname === '/api/session') {
     if (req.method !== 'POST') {
       sendJson(res, 405, { error: 'POST so‘rovi talab qilinadi.' });
@@ -416,7 +559,16 @@ async function handleHttpRequest(req, res) {
       return;
     }
     await qualifyReferral(String(telegramUser.id));
-    sendJson(res, 200, await getCampaignStats(String(telegramUser.id)));
+    const campaignStats = await getCampaignStats(String(telegramUser.id));
+    let gifts;
+    let giftCatalogError = null;
+    try {
+      gifts = await getCollectibleGiftCatalog();
+    } catch (error) {
+      console.error('Failed to load Telegram collectible gift catalog:', error);
+      giftCatalogError = 'Haqiqiy Telegram sovg‘alarini yuklab bo‘lmadi. Keyinroq qayta urinib ko‘ring.';
+    }
+    sendJson(res, 200, { ...campaignStats, gifts: gifts || [], giftCatalogError });
     return;
   }
   const file = staticFiles[requestUrl.pathname];
@@ -425,7 +577,10 @@ async function handleHttpRequest(req, res) {
     res.end('Not found');
     return;
   }
-  const content = await fs.promises.readFile(path.join(__dirname, 'public', file[0]));
+  const filePath = requestUrl.pathname === '/lottie.min.js'
+    ? file[0]
+    : path.join(__dirname, 'public', file[0]);
+  const content = await fs.promises.readFile(filePath);
   res.writeHead(200, {
     'content-type': file[1],
     'cache-control': 'no-cache',
