@@ -606,6 +606,26 @@ h1 span,
   outline: none;
 }
 
+.gift-card-locked {
+  border-color: rgba(195, 211, 240, 0.08);
+}
+
+.gift-card-locked .gift-artwork > img {
+  filter: saturate(0.72) brightness(0.78);
+}
+
+.gift-availability {
+  display: block;
+  margin-top: 6px;
+  color: #d5b37c;
+  font-size: 8px;
+  line-height: 1.35;
+}
+
+.gift-availability-ready {
+  color: var(--mint);
+}
+
 .gift-artwork {
   position: relative;
   display: grid;
@@ -1054,7 +1074,8 @@ button:disabled {
 }
 
 .gift-dialog-model,
-.gift-dialog-cost {
+.gift-dialog-cost,
+.gift-dialog-availability {
   margin: 7px 0 0;
   color: var(--muted);
   font-size: 12px;
@@ -1063,6 +1084,10 @@ button:disabled {
 .gift-dialog-cost {
   color: var(--mint);
   font-weight: 700;
+}
+
+.gift-dialog-availability {
+  color: #e3c188;
 }
 
 .privacy-note {

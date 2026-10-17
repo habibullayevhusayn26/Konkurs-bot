@@ -9,6 +9,7 @@ const elements = {
   notice: document.getElementById('notice'),
   availability: document.getElementById('gift-availability'),
   shopToggle: document.getElementById('gift-shop-toggle'),
+  shopLabel: document.getElementById('gift-shop-label'),
   giftCount: document.getElementById('gift-count'),
   shop: document.getElementById('gift-shop'),
   giftGrid: document.getElementById('gift-grid'),
@@ -21,6 +22,7 @@ const elements = {
   dialogName: document.getElementById('gift-dialog-name'),
   dialogModel: document.getElementById('gift-dialog-model'),
   dialogCost: document.getElementById('gift-dialog-cost'),
+  dialogAvailability: document.getElementById('gift-dialog-availability'),
   dialogSelect: document.getElementById('gift-dialog-select'),
 };
 
@@ -60,47 +62,56 @@ function openGiftDetails(prize) {
   elements.dialogName.textContent = prize.display_name;
   elements.dialogModel.textContent = prize.model;
   elements.dialogCost.textContent = `${formatter.format(prize.referrals_cost)} referral ball`;
-  elements.dialogSelect.disabled = prize.referrals_cost > campaign.referralBalance;
-  elements.dialogSelect.textContent = prize.referrals_cost > campaign.referralBalance
-    ? 'Balans yetarli emas'
-    : 'Shu sovg‘ani tanlash';
+  const shortfall = prize.referrals_cost - campaign.referralBalance;
+  elements.dialogAvailability.hidden = shortfall <= 0 && !campaign.giftRequest;
+  elements.dialogAvailability.textContent = campaign.giftRequest
+    ? 'Joriy so‘rovingiz admin tomonidan ko‘rib chiqilmoqda.'
+    : `So‘rov yuborish uchun yana ${formatter.format(shortfall)} ball kerak.`;
+  elements.dialogSelect.disabled = shortfall > 0 || Boolean(campaign.giftRequest);
+  elements.dialogSelect.textContent = campaign.giftRequest
+    ? 'So‘rov ko‘rib chiqilmoqda'
+    : shortfall > 0
+      ? `${formatter.format(shortfall)} ball yetishmaydi`
+      : 'Shu sovg‘ani tanlash';
   elements.dialogSelect.onclick = () => selectPrize(prize);
   elements.dialog.showModal();
 }
 
 function renderGiftCatalog(prizes) {
   elements.giftGrid.replaceChildren();
-  const affordablePrizes = prizes.filter(
-    (prize) => prize.referrals_cost <= campaign.referralBalance,
-  );
-  elements.shopToggle.hidden = affordablePrizes.length === 0 || Boolean(campaign.giftRequest);
-  elements.shop.hidden = true;
-  elements.availability.hidden = affordablePrizes.length > 0 && !campaign.giftRequest;
-  elements.giftCount.textContent = formatter.format(affordablePrizes.length).padStart(2, '0');
+  const hasPrizes = prizes.length > 0;
+  elements.shopToggle.hidden = !hasPrizes;
+  elements.shop.hidden = !hasPrizes;
+  elements.shopToggle.setAttribute('aria-expanded', String(hasPrizes));
+  elements.shopLabel.textContent = hasPrizes ? 'Sovg‘alarni yashirish' : 'Barcha sovg‘alarni ko‘rish';
+  elements.availability.hidden = !hasPrizes;
+  elements.giftCount.textContent = formatter.format(prizes.length).padStart(2, '0');
   elements.selection.hidden = true;
   elements.request.hidden = true;
   selectedPrize = null;
 
   if (campaign.giftRequest) {
     elements.availability.textContent =
-      `Sizning ${campaign.giftRequest.prizeDisplayName} sovg‘a so‘rovingiz admin ko‘rib chiqishida.`;
-    return;
+      `Sizning ${campaign.giftRequest.prizeDisplayName} sovg‘a so‘rovingiz admin ko‘rib chiqishida. Katalogni ko‘rishingiz mumkin.`;
+  } else if (hasPrizes && !prizes.some((prize) => prize.referrals_cost <= campaign.referralBalance)) {
+    elements.availability.textContent =
+      'Barcha NFT sovg‘alar va narxlari quyida ko‘rinadi. Balansingiz yetganda mos sovg‘ani tanlab so‘rov yuborishingiz mumkin.';
+  } else if (hasPrizes) {
+    elements.availability.textContent =
+      'Narxlar referral ballarda ko‘rsatilgan. Balans yetmaydigan sovg‘alar ham katalogda qoladi.';
+  } else {
+    elements.availability.textContent = 'Hozircha NFT sovg‘alar qo‘shilmagan.';
   }
 
-  if (!affordablePrizes.length) {
-    const message = prizes.length
-      ? 'Balansingizga mos NFT sovg‘a hozircha yo‘q. Referral yig‘ishda davom eting.'
-      : 'Hozircha tanlash uchun NFT sovg‘a mavjud emas.';
-    elements.availability.textContent = message;
-    return;
-  }
-  elements.availability.textContent = '';
-
-  for (const prize of affordablePrizes) {
+  for (const prize of prizes) {
+    const shortfall = prize.referrals_cost - campaign.referralBalance;
     const card = document.createElement('button');
-    card.className = 'gift-card';
+    card.className = shortfall > 0 ? 'gift-card gift-card-locked' : 'gift-card';
     card.type = 'button';
-    card.setAttribute('aria-label', `${prize.display_name} tafsilotlarini ochish`);
+    card.setAttribute(
+      'aria-label',
+      `${prize.display_name}, ${formatter.format(prize.referrals_cost)} referral ball${shortfall > 0 ? `, yana ${formatter.format(shortfall)} ball kerak` : ''}. Tafsilotlarni ochish`,
+    );
     card.addEventListener('click', () => openGiftDetails(prize));
 
     const artwork = document.createElement('span');
@@ -126,6 +137,17 @@ function renderGiftCatalog(prizes) {
       'gift-type',
       `${formatter.format(prize.referrals_cost)} referral ball`,
     ));
+    if (shortfall > 0) {
+      details.append(createTextElement(
+        'span',
+        'gift-availability',
+        `Yana ${formatter.format(shortfall)} ball kerak`,
+      ));
+    } else if (campaign.giftRequest) {
+      details.append(createTextElement('span', 'gift-availability', 'So‘rov ko‘rib chiqilmoqda'));
+    } else {
+      details.append(createTextElement('span', 'gift-availability gift-availability-ready', 'Balans yetadi'));
+    }
     card.append(artwork, details);
     elements.giftGrid.append(card);
   }
@@ -178,7 +200,9 @@ async function loadCampaign() {
 
 elements.shopToggle.addEventListener('click', () => {
   elements.shop.hidden = !elements.shop.hidden;
-  elements.shopToggle.setAttribute('aria-expanded', String(!elements.shop.hidden));
+  const expanded = !elements.shop.hidden;
+  elements.shopToggle.setAttribute('aria-expanded', String(expanded));
+  elements.shopLabel.textContent = expanded ? 'Sovg‘alarni yashirish' : 'Barcha sovg‘alarni ko‘rish';
 });
 
 document.getElementById('gift-dialog-close').addEventListener('click', closeGiftDialog);

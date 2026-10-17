@@ -99,7 +99,7 @@
             <span>CHEKSIZ<br>SO‘ROV</span>
           </div>
         </div>
-        <p class="catalog-description">Katalogdagi sovg‘alar cheklanmagan. Bir xil katalog sovg‘asiga balansingiz yetganicha qayta-qayta so‘rov yuborishingiz mumkin.</p>
+        <p class="catalog-description">Katalogdagi barcha NFT sovg‘alar balansingizdan qat’i nazar, narxlari va ma’lumotlari bilan ko‘rinadi. Bir xil katalog sovg‘asiga balansingiz yetganicha qayta-qayta so‘rov yuborishingiz mumkin.</p>
         <p class="catalog-message" id="gift-availability" aria-live="polite">Sovg‘alar yuklanmoqda…</p>
         <button class="shop-toggle" id="gift-shop-toggle" type="button" aria-expanded="false" hidden>
           <span class="toggle-icon" aria-hidden="true">
@@ -107,7 +107,7 @@
               <path d="M4 7h16l-1.5 13h-13L4 7Zm4 0a4 4 0 0 1 8 0" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
           </span>
-          <span>NFT sovg‘alarni ko‘rish</span>
+          <span id="gift-shop-label">Sovg‘alarni yashirish</span>
           <span class="toggle-count" id="gift-count">00</span>
           <svg class="toggle-arrow" viewBox="0 0 20 20" fill="none" aria-hidden="true">
             <path d="m5 7.5 5 5 5-5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
@@ -201,6 +201,7 @@
         <h2 id="gift-dialog-name"></h2>
         <p class="gift-dialog-model" id="gift-dialog-model"></p>
         <p class="gift-dialog-cost" id="gift-dialog-cost"></p>
+        <p class="gift-dialog-availability" id="gift-dialog-availability" hidden></p>
         <p class="privacy-note">
           <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M8 2 13 4v3.5c0 3.3-2.1 5.4-5 6.5-2.9-1.1-5-3.2-5-6.5V4l5-2Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
