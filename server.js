@@ -25,9 +25,6 @@ if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
   throw new Error('PORT must be an integer between 1 and 65535.');
 }
 const WEB_APP_URL = process.env.WEB_APP_URL || '';
-const GIFT_CATALOG_CACHE_MS = 15 * 60 * 1000;
-const GIFT_STICKER_CACHE_LIMIT = 32 * 1024 * 1024;
-const MAX_GIFT_STICKER_SIZE = 10 * 1024 * 1024;
 if (WEB_APP_URL) {
   let parsedUrl;
   try {
@@ -48,11 +45,6 @@ const bot = new Telegraf(BOT_TOKEN);
 const ownerSessions = new Map();
 let collections;
 let botUsername;
-let giftCatalogCache = { expiresAt: 0, gifts: [], error: null };
-let giftCatalogRequest;
-const giftStickerCache = new Map();
-const giftStickerRequests = new Map();
-let giftStickerCacheSize = 0;
 
 async function initializeDatabase() {
   await mongoClient.connect();
@@ -63,6 +55,7 @@ async function initializeDatabase() {
     campaignUsers: database.collection('campaign_users'),
     referrals: database.collection('qualified_referrals'),
     rewards: database.collection('referral_rewards'),
+    prizes: database.collection('campaign_prizes'),
     previousRecipients: database.collection('bot_recipients'),
   };
   await collections.referrals.createIndex({ inviter_id: 1 });
@@ -195,146 +188,127 @@ async function getReferralThreshold() {
   return setting ? setting.value : null;
 }
 
-async function getCollectibleGiftCatalog() {
-  if (giftCatalogCache.expiresAt > Date.now()) {
-    if (giftCatalogCache.error) throw new Error(giftCatalogCache.error);
-    return giftCatalogCache.gifts;
-  }
-  if (giftCatalogRequest) return giftCatalogRequest;
-
-  giftCatalogRequest = (async () => {
-    try {
-      const result = await bot.telegram.callApi('getAvailableGifts', {});
-      if (!result || !Array.isArray(result.gifts)) {
-        throw new Error('Telegram returned an invalid available-gifts response.');
-      }
-
-      const gifts = result.gifts
-        .filter((gift) => gift
-          && typeof gift.id === 'string'
-          && gift.sticker
-          && typeof gift.sticker.file_id === 'string'
-          && (!Number.isInteger(gift.remaining_count) || gift.remaining_count > 0))
-        .map((gift) => ({
-          id: gift.id,
-          name: typeof gift.name === 'string' && gift.name
-            ? gift.name
-            : `Telegram sovg‘asi #${gift.id.slice(-5)}`,
-          starCount: gift.star_count,
-          upgradeStarCount: Number.isInteger(gift.upgrade_star_count) && gift.upgrade_star_count > 0
-            ? gift.upgrade_star_count
-            : null,
-          totalCount: Number.isInteger(gift.total_count) ? gift.total_count : null,
-          remainingCount: Number.isInteger(gift.remaining_count) ? gift.remaining_count : null,
-          emoji: gift.sticker.emoji || '🎁',
-          stickerFileId: gift.sticker.file_id,
-          stickerIsVideo: Boolean(gift.sticker.is_video),
-          stickerIsAnimated: Boolean(gift.sticker.is_animated),
-        }));
-
-      giftCatalogCache = { expiresAt: Date.now() + GIFT_CATALOG_CACHE_MS, gifts, error: null };
-      return gifts;
-    } catch (error) {
-      giftCatalogCache = {
-        expiresAt: Date.now() + 60 * 1000,
-        gifts: [],
-        error: error.message,
-      };
-      throw error;
-    }
-  })();
+function parsePrizeLink(input) {
+  let url;
   try {
-    return await giftCatalogRequest;
-  } finally {
-    giftCatalogRequest = null;
+    url = new URL(input.trim());
+  } catch {
+    throw new Error('Gift havolasi noto‘g‘ri. t.me/nft/Model-123 ko‘rinishida yuboring.');
+  }
+  if (url.protocol !== 'https:' || url.search || url.hash || url.username || url.password) {
+    throw new Error('Faqat parametrsiz HTTPS Telegram NFT yoki Fragment havolasini kiriting.');
+  }
+  const telegramHost = ['t.me', 'telegram.me'].includes(url.hostname.toLowerCase());
+  const fragmentHost = ['fragment.com', 'www.fragment.com'].includes(url.hostname.toLowerCase());
+  const match = telegramHost
+    ? /^\/nft\/([A-Za-z0-9-]+)\/?$/.exec(url.pathname)
+    : fragmentHost
+      ? /^\/gift\/([A-Za-z0-9-]+)\/?$/.exec(url.pathname)
+      : null;
+  const giftMatch = match && /^([A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)-(\d{1,12})$/.exec(match[1]);
+  if (!giftMatch || !Number.isSafeInteger(Number(giftMatch[2])) || Number(giftMatch[2]) < 1) {
+    throw new Error('Havola formatini tushunmadim. Masalan: https://t.me/nft/LunarSnake-89030');
+  }
+
+  const modelSlug = giftMatch[1];
+  const number = giftMatch[2];
+  const slug = `${modelSlug.toLowerCase()}-${number}`;
+  const model = modelSlug
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/-/g, ' ');
+  const displayName = `${model} #${Number(number).toLocaleString('en-US')}`;
+  return {
+    _id: slug,
+    admin_code: crypto.randomBytes(8).toString('hex'),
+    slug,
+    model,
+    number,
+    display_name: displayName,
+    telegram_url: `https://t.me/nft/${slug}`,
+    fragment_url: `https://fragment.com/gift/${slug}`,
+    image_url: `https://nft.fragment.com/gift/${slug}.medium.jpg`,
+  };
+}
+
+async function verifyPrizeImage(prize) {
+  let response;
+  try {
+    response = await fetch(prize.image_url, {
+      method: 'HEAD',
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch (error) {
+    throw new Error(`NFT rasmini Fragment’dan tekshirib bo‘lmadi: ${error.message}`);
+  }
+  if (!response.ok || !/^image\/jpeg(?:;|$)/i.test(response.headers.get('content-type') || '')) {
+    throw new Error('Bu NFT uchun haqiqiy Fragment rasmi topilmadi. Telegram NFT havolasini qayta tekshiring.');
   }
 }
 
-async function getGiftSticker(gift) {
-  const cached = giftStickerCache.get(gift.id);
-  if (cached && cached.expiresAt > Date.now()) {
-    giftStickerCache.delete(gift.id);
-    giftStickerCache.set(gift.id, cached);
-    return cached;
-  }
-  if (cached) {
-    giftStickerCache.delete(gift.id);
-    giftStickerCacheSize -= cached.sticker.length;
-  }
-  if (giftStickerRequests.has(gift.id)) return giftStickerRequests.get(gift.id);
-
-  const request = (async () => {
-    const file = await bot.telegram.getFile(gift.stickerFileId);
-    if (!file.file_path) throw new Error(`Telegram did not return a file path for gift ${gift.id}.`);
-    const extension = path.extname(file.file_path).toLowerCase();
-    const contentTypes = {
-      '.webp': 'image/webp',
-      '.png': 'image/png',
-      '.jpg': 'image/jpeg',
-      '.jpeg': 'image/jpeg',
-      '.tgs': 'application/x-tgsticker',
-      '.webm': 'video/webm',
-    };
-    const contentType = contentTypes[extension];
-    if (!contentType) throw new Error(`Telegram returned an unsupported sticker type for gift ${gift.id}.`);
-
-    const fileUrl = await bot.telegram.getFileLink(file);
-    const response = await fetch(fileUrl);
-    if (!response.ok) {
-      throw new Error(`Could not download the Telegram gift sticker (${response.status}).`);
-    }
-    const contentLength = Number(response.headers.get('content-length') || 0);
-    if (contentLength > MAX_GIFT_STICKER_SIZE) {
-      throw new Error(`Telegram gift sticker is unexpectedly large (${gift.id}).`);
-    }
-    const sticker = Buffer.from(await response.arrayBuffer());
-    if (sticker.length > MAX_GIFT_STICKER_SIZE) {
-      throw new Error(`Telegram gift sticker is unexpectedly large (${gift.id}).`);
-    }
-
-    const result = { sticker, contentType, expiresAt: Date.now() + 60 * 60 * 1000 };
-    if (sticker.length <= GIFT_STICKER_CACHE_LIMIT) {
-      while (giftStickerCache.size && giftStickerCacheSize + sticker.length > GIFT_STICKER_CACHE_LIMIT) {
-        const [oldestId, oldest] = giftStickerCache.entries().next().value;
-        giftStickerCache.delete(oldestId);
-        giftStickerCacheSize -= oldest.sticker.length;
-      }
-      giftStickerCache.set(gift.id, result);
-      giftStickerCacheSize += sticker.length;
-    }
-    return result;
-  })();
-  giftStickerRequests.set(gift.id, request);
-  try {
-    return await request;
-  } finally {
-    giftStickerRequests.delete(gift.id);
-  }
+async function getCampaignPrizes(userId, includeAdminCode = false) {
+  const availabilityFilter = userId
+    ? { $or: [{ reservation_token: { $exists: false } }, { reserved_by: userId }] }
+    : { reservation_token: { $exists: false } };
+  const prizes = await collections.prizes.find({ active: true, ...availabilityFilter })
+    .sort(userId ? { reservation_token: -1, created_at: -1 } : { created_at: -1 })
+    .limit(100)
+    .project({
+      _id: 1,
+      model: 1,
+      number: 1,
+      display_name: 1,
+      telegram_url: 1,
+      fragment_url: 1,
+      image_url: 1,
+      reserved_by: 1,
+      ...(includeAdminCode ? { admin_code: 1 } : {}),
+    })
+    .toArray();
+  return prizes.map((prize) => {
+    const { reserved_by: reservedBy, ...publicPrize } = prize;
+    return { ...publicPrize, is_awarded: Boolean(userId && reservedBy === userId) };
+  });
 }
 
 async function createRewardIfEligible(userId) {
   const threshold = await getReferralThreshold();
-  if (!threshold) return false;
+  if (!threshold) return null;
+  if (await collections.rewards.findOne({ _id: userId })) return null;
   const referrals = await collections.referrals.countDocuments({ inviter_id: userId });
-  if (referrals < threshold) return false;
+  if (referrals < threshold) return null;
   const user = await collections.campaignUsers.findOne({ _id: userId });
-  if (!user) return false;
-  const result = await collections.rewards.updateOne(
-    { _id: userId },
-    {
-      $setOnInsert: {
-        user_id: userId,
-        first_name: user.first_name || '',
-        username: user.username || null,
-        status: 'pending',
-        threshold_at_award: threshold,
-        referrals_at_award: referrals,
-        created_at: new Date(),
-      },
-    },
-    { upsert: true },
+  if (!user) return null;
+  const reservationToken = crypto.randomUUID();
+  const prize = await collections.prizes.findOneAndUpdate(
+    { active: true, reservation_token: { $exists: false } },
+    { $set: { reserved_by: userId, reservation_token: reservationToken, reserved_at: new Date() } },
+    { sort: { created_at: 1 }, returnDocument: 'after', includeResultMetadata: false },
   );
-  return result.upsertedCount > 0;
+  if (!prize) return null;
+
+  try {
+    await collections.rewards.insertOne({
+      _id: userId,
+      user_id: userId,
+      first_name: user.first_name || '',
+      username: user.username || null,
+      prize_id: prize._id,
+      prize_display_name: prize.display_name,
+      prize_telegram_url: prize.telegram_url,
+      status: 'pending',
+      threshold_at_award: threshold,
+      referrals_at_award: referrals,
+      created_at: new Date(),
+    });
+  } catch (error) {
+    await collections.prizes.updateOne(
+      { _id: prize._id, reservation_token: reservationToken },
+      { $unset: { reserved_by: '', reservation_token: '', reserved_at: '' } },
+    );
+    if (error.code === 11000) return null;
+    throw error;
+  }
+  return prize;
 }
 
 async function qualifyReferral(userId) {
@@ -358,7 +332,7 @@ async function qualifyReferral(userId) {
     try {
       await bot.telegram.sendMessage(
         Number(user.referred_by),
-        '🎉 Tabriklaymiz! Referral sharti bajarildi. NFT gift’ingizni admin qo‘lda topshiradi.',
+        `🎉 Tabriklaymiz! Siz ${rewardCreated.display_name} NFT sovg‘asini yutdingiz. Admin uni qo‘lda topshiradi.`,
       );
     } catch (error) {
       console.error(`Could not notify referrer ${user.referred_by} about the earned gift:`, error);
@@ -412,19 +386,26 @@ async function showWelcome(ctx) {
 
 async function getCampaignStats(userId) {
   await createRewardIfEligible(userId);
-  const [profile, referralCount, threshold, reward] = await Promise.all([
+  const [profile, referralCount, threshold, reward, prizes] = await Promise.all([
     collections.campaignUsers.findOne({ _id: userId }),
     collections.referrals.countDocuments({ inviter_id: userId }),
     getReferralThreshold(),
     collections.rewards.findOne({ _id: userId }),
+    getCampaignPrizes(userId),
   ]);
   const botLink = `https://t.me/${botUsername}?start=ref_${userId}`;
   return {
     firstName: profile ? profile.first_name : '',
     referralCount,
     threshold,
+    eligibleForReward: Boolean(threshold && referralCount >= threshold),
     giftStatus: reward ? reward.status : null,
     giftReferrals: reward ? reward.referrals_at_award : null,
+    rewardPrize: reward ? {
+      displayName: reward.prize_display_name,
+      telegramUrl: reward.prize_telegram_url,
+    } : null,
+    prizes,
     botLink,
   };
 }
@@ -520,32 +501,10 @@ const staticFiles = {
   '/': ['index.html', 'text/html; charset=utf-8'],
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
   '/style.css': ['style.css', 'text/css; charset=utf-8'],
-  '/lottie.min.js': [
-    path.join(__dirname, 'node_modules', 'lottie-web', 'build', 'player', 'lottie.min.js'),
-    'text/javascript; charset=utf-8',
-  ],
 };
 
 async function handleHttpRequest(req, res) {
   const requestUrl = new URL(req.url, 'http://localhost');
-  const giftStickerMatch = /^\/api\/gifts\/([^/]+)\/sticker$/.exec(requestUrl.pathname);
-  if (giftStickerMatch && req.method === 'GET') {
-    const giftId = decodeURIComponent(giftStickerMatch[1]);
-    const gift = (await getCollectibleGiftCatalog()).find((entry) => entry.id === giftId);
-    if (!gift) {
-      res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
-      res.end('Gift not found');
-      return;
-    }
-    const { sticker, contentType } = await getGiftSticker(gift);
-    res.writeHead(200, {
-      'content-type': contentType,
-      'cache-control': 'public, max-age=86400, immutable',
-      'x-content-type-options': 'nosniff',
-    });
-    res.end(sticker);
-    return;
-  }
   if (requestUrl.pathname === '/api/session') {
     if (req.method !== 'POST') {
       sendJson(res, 405, { error: 'POST so‘rovi talab qilinadi.' });
@@ -564,15 +523,7 @@ async function handleHttpRequest(req, res) {
     }
     await qualifyReferral(String(telegramUser.id));
     const campaignStats = await getCampaignStats(String(telegramUser.id));
-    let gifts;
-    let giftCatalogError = null;
-    try {
-      gifts = await getCollectibleGiftCatalog();
-    } catch (error) {
-      console.error('Failed to load Telegram collectible gift catalog:', error);
-      giftCatalogError = 'Haqiqiy Telegram sovg‘alarini yuklab bo‘lmadi. Keyinroq qayta urinib ko‘ring.';
-    }
-    sendJson(res, 200, { ...campaignStats, gifts: gifts || [], giftCatalogError });
+    sendJson(res, 200, campaignStats);
     return;
   }
   const file = staticFiles[requestUrl.pathname];
@@ -581,15 +532,12 @@ async function handleHttpRequest(req, res) {
     res.end('Not found');
     return;
   }
-  const filePath = requestUrl.pathname === '/lottie.min.js'
-    ? file[0]
-    : path.join(__dirname, 'public', file[0]);
-  const content = await fs.promises.readFile(filePath);
+  const content = await fs.promises.readFile(path.join(__dirname, 'public', file[0]));
   res.writeHead(200, {
     'content-type': file[1],
     'cache-control': 'no-cache',
     'x-content-type-options': 'nosniff',
-    'content-security-policy': "default-src 'self' https://telegram.org; script-src 'self' https://telegram.org; style-src 'self'; connect-src 'self'; img-src 'self' data:",
+    'content-security-policy': "default-src 'self' https://telegram.org; script-src 'self' https://telegram.org; style-src 'self'; connect-src 'self'; img-src 'self' data: https://nft.fragment.com;",
   });
   res.end(req.method === 'HEAD' ? undefined : content);
 }
@@ -598,6 +546,7 @@ function ownerPanelKeyboard() {
   return Markup.inlineKeyboard([
     [callbackButton('📊 Referral statistikasi', 'admin:stats')],
     [callbackButton('🎯 Referral chegarasini sozlash', 'admin:threshold', 'success')],
+    [callbackButton('💎 NFT sovg‘alarini boshqarish', 'admin:prizes')],
     [callbackButton('🎁 Kutilayotgan giftlar', 'admin:rewards')],
     [callbackButton('📢 Majburiy obuna kanallari', 'admin:channels')],
   ]);
@@ -633,20 +582,45 @@ async function renderChannels(ctx, edit = false) {
   }
 }
 
+async function renderPrizes(ctx, edit = false) {
+  const prizes = await getCampaignPrizes(undefined, true);
+  for (const prize of prizes) {
+    if (!prize.admin_code) {
+      prize.admin_code = crypto.randomBytes(8).toString('hex');
+      await collections.prizes.updateOne(
+        { _id: prize._id, admin_code: { $exists: false } },
+        { $set: { admin_code: prize.admin_code } },
+      );
+    }
+  }
+  const rows = prizes.map((prize) => [
+    callbackButton(`🗑 ${prize.display_name}`, `admin:prize_delete:${prize.admin_code}`, 'danger'),
+  ]);
+  rows.push([callbackButton('➕ NFT havolasi qo‘shish', 'admin:prize_add', 'success')]);
+  rows.push([callbackButton('⬅️ Panelga qaytish', 'admin:panel')]);
+  const text = prizes.length
+    ? `💎 Yutuq sifatida ko‘rsatiladigan NFT’lar (${prizes.length}):\n\n${prizes.map((prize, index) => `${index + 1}. ${prize.display_name}\n${prize.telegram_url}`).join('\n\n')}\n\nFaqat sovg‘a qilishga tayyor, o‘zingizga tegishli giftlarni ro‘yxatga qo‘shing.`
+    : '💎 Hozircha NFT yutuqlari qo‘shilmagan. Faqat sovg‘a qilishga tayyor, o‘zingizga tegishli Telegram NFT havolasini kiriting.';
+  if (edit && ctx.callbackQuery && ctx.callbackQuery.message) {
+    await ctx.editMessageText(text, Markup.inlineKeyboard(rows));
+  } else {
+    await ctx.reply(text, Markup.inlineKeyboard(rows));
+  }
+}
+
 async function showPendingRewards(ctx, edit = false) {
   const [rewards, total] = await Promise.all([
     collections.rewards.find({ status: 'pending' }).sort({ created_at: 1 }).limit(20).toArray(),
     collections.rewards.countDocuments({ status: 'pending' }),
   ]);
   const text = total
-    ? `🎁 NFT giftni qo‘lda topshirib, “Topshirildi” tugmasini bosing. Kutilayotgan: ${total}${total > rewards.length ? ` (birinchi ${rewards.length} tasi)` : ''}.\n\n${rewards.map((reward, index) => `${index + 1}. ${reward.first_name || 'Foydalanuvchi'}${reward.username ? ` (@${reward.username})` : ''} — ID: ${reward.user_id}`).join('\n')}`
+    ? `🎁 NFT giftni qo‘lda topshirib, “Topshirildi” tugmasini bosing. Kutilayotgan: ${total}${total > rewards.length ? ` (birinchi ${rewards.length} tasi)` : ''}.\n\n${rewards.map((reward, index) => `${index + 1}. ${reward.first_name || 'Foydalanuvchi'}${reward.username ? ` (@${reward.username})` : ''} — ID: ${reward.user_id}\n   Sovg‘a: ${reward.prize_display_name || 'NFT hali biriktirilmagan'}`).join('\n')}`
     : '🎁 Hozircha topshirilishi kutilayotgan gift yo‘q.';
   const rows = rewards.map((reward) => [
-    callbackButton(
-      `✅ ID: ${reward.user_id}`,
-      `admin:reward_done:${reward.user_id}`,
-      'success',
-    ),
+    ...(reward.prize_telegram_url
+      ? [urlButton(`💎 ${reward.prize_display_name}`, reward.prize_telegram_url)]
+      : []),
+    callbackButton(`✅ ID: ${reward.user_id}`, `admin:reward_done:${reward.user_id}`, 'success'),
   ]);
   rows.push([callbackButton('⬅️ Panelga qaytish', 'admin:panel')]);
   if (edit && ctx.callbackQuery && ctx.callbackQuery.message) {
@@ -680,6 +654,32 @@ async function handleOwnerInput(ctx) {
     ownerSessions.delete(OWNER_ID);
     await ctx.reply(`✅ Yangi foydalanuvchi taklif qilish chegarasi ${threshold} qilib saqlandi.`);
     await showOwnerPanel(ctx);
+    return true;
+  }
+  if (session.action === 'prize_add') {
+    try {
+      const prize = parsePrizeLink(text);
+      await verifyPrizeImage(prize);
+      const result = await collections.prizes.updateOne(
+        { _id: prize._id },
+        {
+          $setOnInsert: {
+            ...prize,
+            created_at: new Date(),
+            created_by: OWNER_ID,
+          },
+          $set: { active: true },
+        },
+        { upsert: true },
+      );
+      ownerSessions.delete(OWNER_ID);
+      await ctx.reply(result.upsertedCount
+        ? `✅ ${prize.display_name} NFT yutuqlar ro‘yxatiga qo‘shildi.`
+        : `ℹ️ ${prize.display_name} ro‘yxatda bor edi; rasmi tekshirildi.`);
+      await renderPrizes(ctx);
+    } catch (error) {
+      await ctx.reply(`⚠️ ${error.message}\n\nMasalan: https://t.me/nft/LunarSnake-89030\nQayta yuboring yoki /cancel yozing.`);
+    }
     return true;
   }
   if (session.action === 'channel_add' || session.action === 'channel_edit') {
@@ -812,6 +812,29 @@ bot.action(/^admin:(.+)$/, async (ctx) => {
     await ctx.reply(`🎯 Hozirgi chegara: ${threshold || 'sozlanmagan'}.\nNechta tasdiqlangan taklifdan keyin bitta NFT gift yutish mumkin? Yuboring yoki /cancel yozing.`);
   } else if (action === 'rewards') {
     await showPendingRewards(ctx, true);
+  } else if (action === 'prizes') {
+    await renderPrizes(ctx, true);
+  } else if (action === 'prize_add') {
+    ownerSessions.set(OWNER_ID, { action: 'prize_add' });
+    await ctx.reply(
+      '💎 Sovg‘a qilmoqchi bo‘lgan haqiqiy Telegram NFT gift havolasini yuboring.\n\n'
+        + 'Masalan: https://t.me/nft/LunarSnake-89030\n'
+        + 'Telegram NFT havolasi yoki Fragment’dagi gift sahifasi qabul qilinadi. Rasm mavjudligi tekshiriladi. '
+        + 'Faqat o‘zingizda bor va yutuq egasiga topshira oladigan NFT’ni qo‘shing. Bekor qilish: /cancel',
+    );
+  } else if (action.startsWith('prize_delete:')) {
+    const adminCode = action.slice('prize_delete:'.length);
+    if (!/^[a-f0-9]{16}$/.test(adminCode)) {
+      await ctx.reply('⚠️ NFT identifikatori noto‘g‘ri.');
+      return;
+    }
+    const result = await collections.prizes.deleteOne({
+      admin_code: adminCode,
+      active: true,
+      reservation_token: { $exists: false },
+    });
+    await ctx.reply(result.deletedCount ? '✅ NFT yutuqlar ro‘yxatidan olib tashlandi.' : 'ℹ️ NFT topilmadi yoki avval olib tashlangan.');
+    await renderPrizes(ctx);
   } else if (action.startsWith('reward_done:')) {
     const userId = action.slice('reward_done:'.length);
     if (!/^\d{1,20}$/.test(userId)) {
@@ -822,6 +845,15 @@ bot.action(/^admin:(.+)$/, async (ctx) => {
       { _id: userId, status: 'pending' },
       { $set: { status: 'delivered', delivered_at: new Date(), delivered_by: OWNER_ID } },
     );
+    if (result.modifiedCount) {
+      const reward = await collections.rewards.findOne({ _id: userId });
+      if (reward && reward.prize_id) {
+        await collections.prizes.updateOne(
+          { _id: reward.prize_id, reserved_by: userId },
+          { $set: { delivered_at: new Date(), delivered_by: OWNER_ID } },
+        );
+      }
+    }
     await ctx.reply(result.modifiedCount ? '✅ Sovg‘a topshirildi deb qayd qilindi.' : 'ℹ️ Kutilayotgan sovg‘a topilmadi yoki avval topshirilgan.');
     await showPendingRewards(ctx);
   } else if (action === 'channels') {

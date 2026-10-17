@@ -15,15 +15,6 @@ const elements = {
 };
 
 const formatter = new Intl.NumberFormat('uz-UZ');
-const giftMediaObserver = 'IntersectionObserver' in window
-  ? new IntersectionObserver((entries) => {
-    for (const entry of entries) {
-      if (!entry.isIntersecting) continue;
-      giftMediaObserver.unobserve(entry.target);
-      loadGiftMedia(entry.target);
-    }
-  }, { rootMargin: '120px' })
-  : null;
 
 function showError(message) {
   elements.notice.textContent = message;
@@ -37,119 +28,57 @@ function createTextElement(tag, className, text) {
   return element;
 }
 
-async function loadGiftMedia(container) {
-  const gift = container.gift;
-  const url = `/api/gifts/${encodeURIComponent(gift.id)}/sticker`;
-  try {
-    if (gift.stickerIsVideo) {
-      const video = document.createElement('video');
-      video.src = url;
-      video.autoplay = true;
-      video.loop = true;
-      video.muted = true;
-      video.playsInline = true;
-      video.preload = 'none';
-      video.setAttribute('aria-label', gift.name);
-      video.addEventListener('error', () => {
-        container.replaceChildren(createTextElement('span', 'gift-media-fallback', gift.emoji));
-      }, { once: true });
-      container.replaceChildren(video);
-      return;
-    }
-    if (gift.stickerIsAnimated) {
-      if (!window.lottie || !('DecompressionStream' in window)) {
-        throw new Error('Animated gift preview is not supported in this Telegram app.');
-      }
-      const response = await fetch(url);
-      if (!response.ok) throw new Error(`Gift preview request failed (${response.status}).`);
-      const compressed = await response.arrayBuffer();
-      const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream('gzip'));
-      const animationData = JSON.parse(await new Response(stream).text());
-      window.lottie.loadAnimation({
-        container,
-        renderer: 'svg',
-        loop: true,
-        autoplay: true,
-        animationData,
-      });
-      return;
-    }
-    const image = document.createElement('img');
-    image.src = url;
-    image.alt = gift.name;
-    image.loading = 'lazy';
-    image.decoding = 'async';
-    image.addEventListener('error', () => {
-      container.replaceChildren(createTextElement('span', 'gift-media-fallback', gift.emoji));
-    }, { once: true });
-    container.replaceChildren(image);
-  } catch (error) {
-    console.error(`Could not render Telegram gift ${gift.id}:`, error);
-    container.replaceChildren(createTextElement('span', 'gift-media-fallback', '🎁'));
-    container.title = 'Haqiqiy sovg‘a rasmi yuklanmadi.';
-  }
-}
-
-function renderGiftCatalog(gifts, catalogError) {
+function renderGiftCatalog(prizes) {
   elements.giftGrid.replaceChildren();
-  elements.giftCount.textContent = formatter.format(gifts.length);
-  if (catalogError) {
-    elements.giftGrid.append(createTextElement('p', 'catalog-message error', catalogError));
-    return;
-  }
-  if (!gifts.length) {
+  elements.giftCount.textContent = formatter.format(prizes.length);
+  if (!prizes.length) {
     elements.giftGrid.append(createTextElement(
       'p',
       'catalog-message',
-      'Telegram hozir katalogda ko‘rsatish uchun sovg‘a qaytarmadi. Keyinroq qayta oching.',
+      'Hozircha yutuq NFT’lari qo‘shilmagan. Admin tez orada haqiqiy sovg‘alarni joylaydi.',
     ));
     return;
   }
 
-  for (const gift of gifts) {
-    const card = document.createElement('article');
-    card.className = 'gift-card';
+  for (const prize of prizes.sort((left, right) => Number(right.is_awarded) - Number(left.is_awarded))) {
+    const card = document.createElement('a');
+    card.className = prize.is_awarded ? 'gift-card gift-card-won' : 'gift-card';
+    card.href = prize.telegram_url;
+    card.target = '_blank';
+    card.rel = 'noopener noreferrer';
+    card.setAttribute('aria-label', `${prize.display_name} Telegram NFT`);
+    card.addEventListener('click', (event) => {
+      if (!telegram || typeof telegram.openTelegramLink !== 'function') return;
+      event.preventDefault();
+      telegram.openTelegramLink(prize.telegram_url);
+    });
+
     const artwork = document.createElement('div');
     artwork.className = 'gift-artwork';
-    artwork.append(createTextElement('span', 'gift-media-fallback', gift.emoji));
-    const sticker = document.createElement('div');
-    sticker.className = 'gift-sticker';
-    sticker.gift = gift;
-    artwork.append(sticker);
-    if (gift.totalCount !== null) {
-      artwork.append(createTextElement(
-        'span',
-        'gift-edition',
-        gift.remainingCount === null
-          ? `LIMITED · ${formatter.format(gift.totalCount)}`
-          : `${formatter.format(gift.remainingCount)} / ${formatter.format(gift.totalCount)}`,
-      ));
+    const image = document.createElement('img');
+    image.src = prize.image_url;
+    image.alt = prize.display_name;
+    image.loading = 'lazy';
+    image.decoding = 'async';
+    image.addEventListener('error', () => {
+      image.replaceWith(createTextElement('span', 'gift-media-fallback', '💎'));
+    }, { once: true });
+    artwork.append(image);
+    artwork.append(createTextElement('span', 'gift-edition', `#${formatter.format(Number(prize.number))}`));
+    if (prize.is_awarded) {
+      artwork.append(createTextElement('span', 'gift-won-badge', 'SIZ YUTDINGIZ'));
     }
 
     const details = document.createElement('div');
     details.className = 'gift-details';
-    details.append(createTextElement('h3', 'gift-name', gift.name));
+    details.append(createTextElement('h3', 'gift-name', prize.model));
     details.append(createTextElement(
       'p',
-      gift.upgradeStarCount === null ? 'gift-type' : 'gift-type gift-collectible',
-      gift.upgradeStarCount === null ? 'Telegram sovg‘asi' : 'NFT upgrade mumkin',
+      prize.is_awarded ? 'gift-type gift-collectible' : 'gift-type',
+      prize.is_awarded ? 'Sizning sovg‘angiz 🎉' : 'Telegram NFT Gift',
     ));
-    const price = document.createElement('p');
-    price.className = 'gift-price';
-    price.append(createTextElement('span', 'gift-star-price', `⭐ ${formatter.format(gift.starCount)}`));
-    price.append(createTextElement(
-      'span',
-      gift.upgradeStarCount === null ? 'gift-upgrade-price gift-standard' : 'gift-upgrade-price',
-      gift.upgradeStarCount === null
-        ? 'NFT upgrade ma’lum emas'
-        : `⬆ ${formatter.format(gift.upgradeStarCount)}`,
-    ));
-    details.append(price);
     card.append(artwork, details);
     elements.giftGrid.append(card);
-
-    if (giftMediaObserver) giftMediaObserver.observe(sticker);
-    else loadGiftMedia(sticker);
   }
 }
 
@@ -169,7 +98,7 @@ async function loadCampaign() {
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || 'Ma’lumotlarni yuklab bo‘lmadi.');
-    renderGiftCatalog(result.gifts || [], result.giftCatalogError);
+    renderGiftCatalog(result.prizes || []);
     elements.count.textContent = String(result.referralCount);
     elements.target.textContent = result.threshold ? String(result.threshold) : '—';
     elements.link.textContent = result.botLink;
@@ -180,8 +109,10 @@ async function loadCampaign() {
       elements.status.textContent = 'Gift topshirildi';
       elements.status.classList.add('success');
     } else if (result.giftStatus === 'pending') {
-      elements.status.textContent = 'Gift kutilmoqda';
+      elements.status.textContent = 'NFT yutdingiz!';
       elements.status.classList.add('success');
+    } else if (result.eligibleForReward) {
+      elements.status.textContent = 'Sovg‘a kutilmoqda';
     } else if (!result.threshold) {
       elements.status.textContent = 'Chegara kutilmoqda';
     } else {
@@ -195,8 +126,12 @@ async function loadCampaign() {
     elements.progress.setAttribute('aria-valuenow', String(progress));
     elements.caption.textContent = result.threshold
       ? result.giftStatus
-        ? 'Sizning bitta NFT gift yutug‘ingiz qayd etilgan.'
-        : `Yana ${Math.max(0, result.threshold - result.referralCount)} ta tasdiqlangan taklif kerak.`
+        ? result.rewardPrize
+          ? `Siz ${result.rewardPrize.displayName} sovg‘asini yutdingiz. Admin topshiradi.`
+          : 'NFT sovg‘angiz qayd etilgan. Admin topshiradi.'
+        : result.eligibleForReward
+          ? 'Shart bajarildi! Admin NFT sovg‘asini yutuqlar ro‘yxatiga qo‘shishi bilan sizga biriktiriladi.'
+          : `Yana ${Math.max(0, result.threshold - result.referralCount)} ta tasdiqlangan taklif kerak.`
       : 'Gift yutish chegarasini bot admini sozlaydi.';
   } catch (error) {
     showError(error.message);
