@@ -12,39 +12,44 @@
   <body>
     <main class="page">
       <header class="hero">
-        <div class="gift-icon" aria-hidden="true">🎁</div>
+        <div class="gift-mark" aria-hidden="true">NFT</div>
         <p class="eyebrow">NFT GIFT CAMPAIGN</p>
-        <h1>Do‘stlarni taklif qiling,<br>gift yutib oling</h1>
-        <p class="subtitle">Do‘stingiz botni ishga tushirib, majburiy kanallarga obuna bo‘lgach taklifingiz hisoblanadi.</p>
+        <h1>Do‘stlarni taklif qiling,<br>gift tanlang</h1>
+        <p class="subtitle">Do‘stingiz botni ishga tushirib, majburiy kanallarga obuna bo‘lgach taklifingiz hisoblanadi. Har bir tasdiqlangan taklif 1 ball beradi.</p>
       </header>
+
+      <section class="progress-card" aria-live="polite">
+        <div class="stats-row">
+          <div>
+            <p class="label">Referral balansi</p>
+            <p class="count"><span id="referral-balance">—</span><span class="count-unit">ball</span></p>
+            <p class="referral-summary">Tasdiqlangan takliflar: <span id="referral-count">—</span></p>
+          </div>
+          <div class="badge" id="gift-status">Yuklanmoqda</div>
+        </div>
+      </section>
 
       <section class="prizes-section" aria-labelledby="prizes-title">
         <div class="section-heading">
           <div>
             <p class="eyebrow">HAQIQIY NFT SOVG‘ALAR</p>
-            <h2 id="prizes-title">Yutuqlar</h2>
+            <h2 id="prizes-title">Sovg‘alar do‘koni</h2>
           </div>
-          <span class="catalog-count" id="gift-count">—</span>
         </div>
-        <p class="catalog-description">Admin kiritgan, yutuq sifatida topshiriladigan raqamlangan NFT sovg‘alar.</p>
-        <div class="gift-grid" id="gift-grid" aria-live="polite">
-          <p class="catalog-message">NFT sovg‘alar yuklanmoqda…</p>
-        </div>
-        <p class="catalog-footnote">Sovg‘a yutug‘i bajarilgach admin tomonidan qo‘lda topshiriladi.</p>
-      </section>
-
-      <section class="progress-card" aria-live="polite">
-        <div class="stats-row">
-          <div>
-            <p class="label">Hisoblangan takliflar</p>
-            <p class="count"><span id="referral-count">—</span><span class="count-divider"> / </span><span id="referral-target">—</span></p>
+        <p class="catalog-description">Balansingiz yetadigan sovg‘ani tanlang. Tanlov adminga so‘rov sifatida yuboriladi.</p>
+        <p class="catalog-message" id="gift-availability" aria-live="polite">Sovg‘alar yuklanmoqda…</p>
+        <button class="shop-toggle" id="gift-shop-toggle" type="button" aria-expanded="false" hidden>NFT gift tanlash</button>
+        <div id="gift-shop" hidden>
+          <div class="gift-grid" id="gift-grid" aria-live="polite"></div>
+          <div class="gift-selection" id="gift-selection" hidden>
+            <div>
+              <p class="label">Tanlangan sovg‘a</p>
+              <p class="selected-gift-name" id="selected-gift-name"></p>
+              <p class="selected-gift-cost" id="selected-gift-cost"></p>
+            </div>
           </div>
-          <div class="badge" id="gift-status">Yuklanmoqda</div>
+          <button class="request-button" id="request-button" type="button" hidden>Olish uchun so‘rov yuborish</button>
         </div>
-        <div class="progress-track" role="progressbar" aria-label="Referral progress" aria-valuemin="0" aria-valuemax="100">
-          <div class="progress-fill" id="progress-fill"></div>
-        </div>
-        <p class="progress-caption" id="progress-caption">Ma’lumotlar yuklanmoqda…</p>
       </section>
 
       <section class="invite-card">
@@ -59,5 +64,19 @@
 
       <p class="notice" id="notice" role="status"></p>
     </main>
+    <dialog class="gift-dialog" id="gift-dialog" aria-labelledby="gift-dialog-name">
+      <div class="gift-dialog-content">
+        <button class="dialog-close" id="gift-dialog-close" type="button" aria-label="Yopish">Yopish</button>
+        <div class="gift-detail-artwork">
+          <img id="gift-dialog-image" src="" alt="">
+        </div>
+        <p class="eyebrow">NFT GIFT</p>
+        <h2 id="gift-dialog-name"></h2>
+        <p class="gift-dialog-model" id="gift-dialog-model"></p>
+        <p class="gift-dialog-cost" id="gift-dialog-cost"></p>
+        <p class="privacy-note">Sovg‘a egasining shaxsiy ma’lumotlari ko‘rsatilmaydi.</p>
+        <button class="request-button" id="gift-dialog-select" type="button">Shu sovg‘ani tanlash</button>
+      </div>
+    </dialog>
   </body>
 </html>

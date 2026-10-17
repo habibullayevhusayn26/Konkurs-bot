@@ -50,16 +50,21 @@ async function initializeDatabase() {
   await mongoClient.connect();
   const database = mongoClient.db(process.env.MONGODB_DB || 'telegram_moderation');
   collections = {
-    config: database.collection('bot_config'),
     channels: database.collection('required_channels'),
     campaignUsers: database.collection('campaign_users'),
     referrals: database.collection('qualified_referrals'),
     rewards: database.collection('referral_rewards'),
     prizes: database.collection('campaign_prizes'),
+    giftRequests: database.collection('gift_requests'),
     previousRecipients: database.collection('bot_recipients'),
   };
   await collections.referrals.createIndex({ inviter_id: 1 });
   await collections.rewards.createIndex({ status: 1, created_at: 1 });
+  await collections.giftRequests.createIndex(
+    { user_id: 1 },
+    { unique: true, partialFilterExpression: { status: 'pending' } },
+  );
+  await collections.giftRequests.createIndex({ status: 1, created_at: 1 });
 }
 
 function isOwner(ctx) {
@@ -183,11 +188,6 @@ async function ensureCampaignUser(user, referralPayload = '') {
   return collections.campaignUsers.findOne({ _id: userId });
 }
 
-async function getReferralThreshold() {
-  const setting = await collections.config.findOne({ _id: 'referral_threshold' });
-  return setting ? setting.value : null;
-}
-
 function parsePrizeLink(input) {
   let url;
   try {
@@ -198,34 +198,71 @@ function parsePrizeLink(input) {
   if (url.protocol !== 'https:' || url.search || url.hash || url.username || url.password) {
     throw new Error('Faqat parametrsiz HTTPS Telegram NFT yoki Fragment havolasini kiriting.');
   }
+
   const telegramHost = ['t.me', 'telegram.me'].includes(url.hostname.toLowerCase());
   const fragmentHost = ['fragment.com', 'www.fragment.com'].includes(url.hostname.toLowerCase());
-  const match = telegramHost
-    ? /^\/nft\/([A-Za-z0-9-]+)\/?$/.exec(url.pathname)
-    : fragmentHost
-      ? /^\/gift\/([A-Za-z0-9-]+)\/?$/.exec(url.pathname)
-      : null;
-  const giftMatch = match && /^([A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)-(\d{1,12})$/.exec(match[1]);
-  if (!giftMatch || !Number.isSafeInteger(Number(giftMatch[2])) || Number(giftMatch[2]) < 1) {
+
+  let match;
+  let modelSlug;
+  let number;
+  let slug;
+  let fragmentUrl;
+  let telegramUrl;
+
+  if (telegramHost) {
+    match = /^\/nft\/([A-Za-z0-9-]+)\/?$/.exec(url.pathname);
+    if (!match) {
+      throw new Error('Havola formatini tushunmadim. Masalan: https://t.me/nft/LunarSnake-89030');
+    }
+    const giftMatch = /^([A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)-(\d{1,12})$/.exec(match[1]);
+    if (!giftMatch || !Number.isSafeInteger(Number(giftMatch[2])) || Number(giftMatch[2]) < 1) {
+      throw new Error('Havola formatini tushunmadim. Masalan: https://t.me/nft/LunarSnake-89030');
+    }
+    modelSlug = giftMatch[1];
+    number = giftMatch[2];
+    slug = `${modelSlug.toLowerCase()}-${number}`;
+    telegramUrl = `https://t.me/nft/${slug}`;
+    fragmentUrl = `https://fragment.com/gift/${slug}`;
+  } else if (fragmentHost) {
+    match = /^\/(?:gift|gifts)\/([A-Za-z0-9-]+)\/?$/.exec(url.pathname);
+    if (!match) {
+      throw new Error('Havola formatini tushunmadim. Fragment gift havolasi /gifts/<slug> yoki /gift/<slug>-<raqam> ko‘rinishida bo‘lishi kerak.');
+    }
+
+    const rawSlug = match[1];
+    const giftMatch = /^([A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)-(\d{1,12})$/.exec(rawSlug);
+    if (giftMatch) {
+      modelSlug = giftMatch[1];
+      number = giftMatch[2];
+      slug = `${modelSlug.toLowerCase()}-${number}`;
+    } else {
+      modelSlug = rawSlug;
+      slug = rawSlug.toLowerCase();
+    }
+    telegramUrl = `https://t.me/nft/${slug}`;
+    fragmentUrl = `https://fragment.com${url.pathname.replace(/\/$/, '')}`;
+  } else {
     throw new Error('Havola formatini tushunmadim. Masalan: https://t.me/nft/LunarSnake-89030');
   }
 
-  const modelSlug = giftMatch[1];
-  const number = giftMatch[2];
-  const slug = `${modelSlug.toLowerCase()}-${number}`;
   const model = modelSlug
     .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    .replace(/-/g, ' ');
-  const displayName = `${model} #${Number(number).toLocaleString('en-US')}`;
+    .replace(/-/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const displayName = number
+    ? `${model} #${Number(number).toLocaleString('en-US')}`
+    : model;
+
   return {
     _id: slug,
     admin_code: crypto.randomBytes(8).toString('hex'),
     slug,
     model,
-    number,
+    number: number || null,
     display_name: displayName,
-    telegram_url: `https://t.me/nft/${slug}`,
-    fragment_url: `https://fragment.com/gift/${slug}`,
+    telegram_url: telegramUrl,
+    fragment_url: fragmentUrl,
     image_url: `https://nft.fragment.com/gift/${slug}.medium.jpg`,
   };
 }
@@ -260,55 +297,19 @@ async function getCampaignPrizes(userId, includeAdminCode = false) {
       telegram_url: 1,
       fragment_url: 1,
       image_url: 1,
+      referrals_cost: 1,
       reserved_by: 1,
       ...(includeAdminCode ? { admin_code: 1 } : {}),
     })
     .toArray();
   return prizes.map((prize) => {
     const { reserved_by: reservedBy, ...publicPrize } = prize;
-    return { ...publicPrize, is_awarded: Boolean(userId && reservedBy === userId) };
+    return {
+      ...publicPrize,
+      referrals_cost: Number.isSafeInteger(publicPrize.referrals_cost) ? publicPrize.referrals_cost : 1,
+      is_reserved: Boolean(userId && reservedBy === userId),
+    };
   });
-}
-
-async function createRewardIfEligible(userId) {
-  const threshold = await getReferralThreshold();
-  if (!threshold) return null;
-  if (await collections.rewards.findOne({ _id: userId })) return null;
-  const referrals = await collections.referrals.countDocuments({ inviter_id: userId });
-  if (referrals < threshold) return null;
-  const user = await collections.campaignUsers.findOne({ _id: userId });
-  if (!user) return null;
-  const reservationToken = crypto.randomUUID();
-  const prize = await collections.prizes.findOneAndUpdate(
-    { active: true, reservation_token: { $exists: false } },
-    { $set: { reserved_by: userId, reservation_token: reservationToken, reserved_at: new Date() } },
-    { sort: { created_at: 1 }, returnDocument: 'after', includeResultMetadata: false },
-  );
-  if (!prize) return null;
-
-  try {
-    await collections.rewards.insertOne({
-      _id: userId,
-      user_id: userId,
-      first_name: user.first_name || '',
-      username: user.username || null,
-      prize_id: prize._id,
-      prize_display_name: prize.display_name,
-      prize_telegram_url: prize.telegram_url,
-      status: 'pending',
-      threshold_at_award: threshold,
-      referrals_at_award: referrals,
-      created_at: new Date(),
-    });
-  } catch (error) {
-    await collections.prizes.updateOne(
-      { _id: prize._id, reservation_token: reservationToken },
-      { $unset: { reserved_by: '', reservation_token: '', reserved_at: '' } },
-    );
-    if (error.code === 11000) return null;
-    throw error;
-  }
-  return prize;
 }
 
 async function qualifyReferral(userId) {
@@ -326,18 +327,6 @@ async function qualifyReferral(userId) {
     { upsert: true },
   );
   if (!result.upsertedCount) return;
-
-  const rewardCreated = await createRewardIfEligible(user.referred_by);
-  if (rewardCreated) {
-    try {
-      await bot.telegram.sendMessage(
-        Number(user.referred_by),
-        `🎉 Tabriklaymiz! Siz ${rewardCreated.display_name} NFT sovg‘asini yutdingiz. Admin uni qo‘lda topshiradi.`,
-      );
-    } catch (error) {
-      console.error(`Could not notify referrer ${user.referred_by} about the earned gift:`, error);
-    }
-  }
 }
 
 function startReferralPayload(ctx) {
@@ -379,31 +368,32 @@ function miniAppKeyboard() {
 async function showWelcome(ctx) {
   const keyboard = miniAppKeyboard();
   const message = WEB_APP_URL
-    ? '👋 Salom! Do‘stlaringizni taklif qiling, referral shartini bajaring va NFT gift yutib oling. Holatingiz Mini App’da.'
+    ? '👋 Salom! Do‘stlaringizni taklif qiling, referral ball to‘plang va Mini App’da NFT gift uchun so‘rov yuboring.'
     : '👋 Salom! Bot ishlayapti, ammo Mini App tugmasi uchun .env faylida HTTPS WEB_APP_URL manzilini sozlash kerak.';
   await ctx.reply(message, keyboard);
 }
 
 async function getCampaignStats(userId) {
-  await createRewardIfEligible(userId);
-  const [profile, referralCount, threshold, reward, prizes] = await Promise.all([
+  const [profile, referralCount, pendingRequest, acceptedRequests, prizes] = await Promise.all([
     collections.campaignUsers.findOne({ _id: userId }),
     collections.referrals.countDocuments({ inviter_id: userId }),
-    getReferralThreshold(),
-    collections.rewards.findOne({ _id: userId }),
+    collections.giftRequests.findOne({ user_id: userId, status: 'pending' }),
+    collections.giftRequests.find({ user_id: userId, status: 'approved' })
+      .project({ referrals_cost: 1 })
+      .toArray(),
     getCampaignPrizes(userId),
   ]);
+  const spentReferrals = acceptedRequests.reduce((total, request) => total + request.referrals_cost, 0)
+    + (pendingRequest ? pendingRequest.referrals_cost : 0);
+  const referralBalance = Math.max(0, referralCount - spentReferrals);
   const botLink = `https://t.me/${botUsername}?start=ref_${userId}`;
   return {
     firstName: profile ? profile.first_name : '',
     referralCount,
-    threshold,
-    eligibleForReward: Boolean(threshold && referralCount >= threshold),
-    giftStatus: reward ? reward.status : null,
-    giftReferrals: reward ? reward.referrals_at_award : null,
-    rewardPrize: reward ? {
-      displayName: reward.prize_display_name,
-      telegramUrl: reward.prize_telegram_url,
+    referralBalance,
+    giftRequest: pendingRequest ? {
+      status: pendingRequest.status,
+      prizeDisplayName: pendingRequest.prize_display_name,
     } : null,
     prizes,
     botLink,
@@ -526,6 +516,127 @@ async function handleHttpRequest(req, res) {
     sendJson(res, 200, campaignStats);
     return;
   }
+  if (requestUrl.pathname === '/api/gift-requests') {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { error: 'POST so‘rovi talab qilinadi.' });
+      return;
+    }
+    if (!OWNER_ID) {
+      throw new HttpError(503, 'Admin ID sozlanmagan. Bot administratoriga murojaat qiling.');
+    }
+    const body = await readJsonBody(req);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      throw new HttpError(400, 'JSON so‘rovi noto‘g‘ri.');
+    }
+    const telegramUser = validateWebAppInitData(body.initData);
+    if (typeof body.prizeId !== 'string' || !/^[a-z0-9-]{1,100}$/i.test(body.prizeId)) {
+      throw new HttpError(400, 'Tanlangan NFT noto‘g‘ri.');
+    }
+    await ensureCampaignUser(telegramUser);
+    if (!await isSubscribedToRequiredChannels(telegramUser.id)) {
+      throw new HttpError(403, 'Majburiy kanallarga obuna bo‘ling, so‘ng Mini App’ni qayta oching.');
+    }
+
+    const userId = String(telegramUser.id);
+    if (await collections.giftRequests.findOne({ user_id: userId, status: 'pending' })) {
+      throw new HttpError(409, 'Sizda admin ko‘rib chiqayotgan sovg‘a so‘rovi bor.');
+    }
+    const [referralCount, previousRequests, profile] = await Promise.all([
+      collections.referrals.countDocuments({ inviter_id: userId }),
+      collections.giftRequests.find({ user_id: userId, status: 'approved' })
+        .project({ referrals_cost: 1 })
+        .toArray(),
+      collections.campaignUsers.findOne({ _id: userId }),
+    ]);
+    const referralBalance = Math.max(
+      0,
+      referralCount - previousRequests.reduce((total, request) => total + request.referrals_cost, 0),
+    );
+    const prize = await collections.prizes.findOne({
+      _id: body.prizeId,
+      active: true,
+      reservation_token: { $exists: false },
+    });
+    if (!prize) {
+      throw new HttpError(409, 'Bu NFT endi mavjud emas. Sovg‘alar ro‘yxatini yangilang.');
+    }
+    const referralsCost = Number.isSafeInteger(prize.referrals_cost) ? prize.referrals_cost : 1;
+    if (referralBalance < referralsCost) {
+      throw new HttpError(409, `Bu NFT uchun ${referralsCost} ball kerak. Joriy balansingiz: ${referralBalance}.`);
+    }
+
+    const requestId = crypto.randomUUID();
+    const reservationToken = `request-${requestId}`;
+    const reservedPrize = await collections.prizes.findOneAndUpdate(
+      { _id: prize._id, active: true, reservation_token: { $exists: false } },
+      {
+        $set: {
+          reserved_by: userId,
+          reservation_token: reservationToken,
+          reserved_at: new Date(),
+        },
+      },
+      { returnDocument: 'after', includeResultMetadata: false },
+    );
+    if (!reservedPrize) {
+      throw new HttpError(409, 'Bu NFT endi mavjud emas. Sovg‘alar ro‘yxatini yangilang.');
+    }
+
+    const giftRequest = {
+      _id: requestId,
+      user_id: userId,
+      first_name: profile ? profile.first_name : telegramUser.first_name || '',
+      username: profile ? profile.username : telegramUser.username || null,
+      prize_id: prize._id,
+      prize_display_name: prize.display_name,
+      prize_telegram_url: prize.telegram_url,
+      referrals_cost: referralsCost,
+      status: 'pending',
+      reservation_token: reservationToken,
+      created_at: new Date(),
+    };
+    try {
+      await collections.giftRequests.insertOne(giftRequest);
+    } catch (error) {
+      await collections.prizes.updateOne(
+        { _id: prize._id, reservation_token: reservationToken },
+        { $unset: { reserved_by: '', reservation_token: '', reserved_at: '' } },
+      );
+      if (error.code === 11000) {
+        throw new HttpError(409, 'Sizda admin ko‘rib chiqayotgan sovg‘a so‘rovi bor.');
+      }
+      throw error;
+    }
+
+    const requester = `${giftRequest.first_name || 'Foydalanuvchi'}${giftRequest.username ? ` (@${giftRequest.username})` : ''}`;
+    try {
+      await bot.telegram.sendMessage(
+        Number(OWNER_ID),
+        `Yangi NFT sovg‘a so‘rovi\n\nFoydalanuvchi: ${requester}\nTelegram ID: ${userId}\nNFT: ${prize.display_name}\nNarxi: ${referralsCost} referral ball`,
+        Markup.inlineKeyboard([
+          [
+            callbackButton('Qabul qilish', `admin:gift_request_approve:${requestId}`, 'success'),
+            callbackButton('Rad etish', `admin:gift_request_reject:${requestId}`, 'danger'),
+          ],
+          [urlButton('NFT havolasini ochish', prize.telegram_url)],
+        ]),
+      );
+    } catch (error) {
+      console.error(`Gift request ${requestId} was saved, but owner notification failed:`, error);
+      sendJson(res, 502, {
+        error: 'So‘rov saqlandi, lekin adminga xabar yuborilmadi. Bot administratoriga murojaat qiling.',
+        requestSaved: true,
+      });
+      return;
+    }
+
+    sendJson(res, 201, {
+      status: 'pending',
+      prizeDisplayName: prize.display_name,
+      referralBalance: referralBalance - referralsCost,
+    });
+    return;
+  }
   const file = staticFiles[requestUrl.pathname];
   if (!file || !['GET', 'HEAD'].includes(req.method)) {
     res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
@@ -545,8 +656,8 @@ async function handleHttpRequest(req, res) {
 function ownerPanelKeyboard() {
   return Markup.inlineKeyboard([
     [callbackButton('📊 Referral statistikasi', 'admin:stats')],
-    [callbackButton('🎯 Referral chegarasini sozlash', 'admin:threshold', 'success')],
     [callbackButton('💎 NFT sovg‘alarini boshqarish', 'admin:prizes')],
+    [callbackButton('NFT so‘rovlari', 'admin:gift_requests')],
     [callbackButton('🎁 Kutilayotgan giftlar', 'admin:rewards')],
     [callbackButton('📢 Majburiy obuna kanallari', 'admin:channels')],
   ]);
@@ -594,12 +705,12 @@ async function renderPrizes(ctx, edit = false) {
     }
   }
   const rows = prizes.map((prize) => [
-    callbackButton(`🗑 ${prize.display_name}`, `admin:prize_delete:${prize.admin_code}`, 'danger'),
+    callbackButton(`🗑 ${prize.display_name} · ${prize.referrals_cost || 1} ball`, `admin:prize_delete:${prize.admin_code}`, 'danger'),
   ]);
   rows.push([callbackButton('➕ NFT havolasi qo‘shish', 'admin:prize_add', 'success')]);
   rows.push([callbackButton('⬅️ Panelga qaytish', 'admin:panel')]);
   const text = prizes.length
-    ? `💎 Yutuq sifatida ko‘rsatiladigan NFT’lar (${prizes.length}):\n\n${prizes.map((prize, index) => `${index + 1}. ${prize.display_name}\n${prize.telegram_url}`).join('\n\n')}\n\nFaqat sovg‘a qilishga tayyor, o‘zingizga tegishli giftlarni ro‘yxatga qo‘shing.`
+    ? `NFT sovg‘alar (${prizes.length}):\n\n${prizes.map((prize, index) => `${index + 1}. ${prize.display_name} — ${prize.referrals_cost || 1} referral ball\n${prize.telegram_url}`).join('\n\n')}\n\nFaqat sovg‘a qilishga tayyor, o‘zingizga tegishli giftlarni qo‘shing.`
     : '💎 Hozircha NFT yutuqlari qo‘shilmagan. Faqat sovg‘a qilishga tayyor, o‘zingizga tegishli Telegram NFT havolasini kiriting.';
   if (edit && ctx.callbackQuery && ctx.callbackQuery.message) {
     await ctx.editMessageText(text, Markup.inlineKeyboard(rows));
@@ -630,6 +741,29 @@ async function showPendingRewards(ctx, edit = false) {
   }
 }
 
+async function showGiftRequests(ctx, edit = false) {
+  const requests = await collections.giftRequests.find({ status: 'pending' })
+    .sort({ created_at: 1 })
+    .limit(20)
+    .toArray();
+  const text = requests.length
+    ? `Kutilayotgan NFT so‘rovlari (${requests.length}${requests.length === 20 ? '+' : ''}):\n\n${requests.map((request, index) => `${index + 1}. ${request.first_name || 'Foydalanuvchi'}${request.username ? ` (@${request.username})` : ''} — ID: ${request.user_id}\n   ${request.prize_display_name} — ${request.referrals_cost} referral ball`).join('\n\n')}`
+    : 'Hozircha NFT sovg‘a so‘rovlari yo‘q.';
+  const rows = requests.flatMap((request) => [
+    [
+      callbackButton(`Qabul: ${request.prize_display_name}`, `admin:gift_request_approve:${request._id}`, 'success'),
+      callbackButton('Rad etish', `admin:gift_request_reject:${request._id}`, 'danger'),
+    ],
+    [urlButton('NFT havolasini ochish', request.prize_telegram_url)],
+  ]);
+  rows.push([callbackButton('Panelga qaytish', 'admin:panel')]);
+  if (edit && ctx.callbackQuery && ctx.callbackQuery.message) {
+    await ctx.editMessageText(text, Markup.inlineKeyboard(rows));
+  } else {
+    await ctx.reply(text, Markup.inlineKeyboard(rows));
+  }
+}
+
 async function handleOwnerInput(ctx) {
   const session = ownerSessions.get(OWNER_ID);
   if (!session) return false;
@@ -640,45 +774,44 @@ async function handleOwnerInput(ctx) {
     await showOwnerPanel(ctx);
     return true;
   }
-  if (session.action === 'threshold') {
-    const threshold = Number(text.trim());
-    if (!Number.isInteger(threshold) || threshold < 1 || threshold > 1000000) {
-      await ctx.reply('⚠️ Chegara 1 dan 1 000 000 gacha bo‘lgan butun son bo‘lishi kerak. Qayta kiriting yoki /cancel yozing.');
-      return true;
-    }
-    await collections.config.updateOne(
-      { _id: 'referral_threshold' },
-      { $set: { value: threshold, updated_at: new Date() } },
-      { upsert: true },
-    );
-    ownerSessions.delete(OWNER_ID);
-    await ctx.reply(`✅ Yangi foydalanuvchi taklif qilish chegarasi ${threshold} qilib saqlandi.`);
-    await showOwnerPanel(ctx);
-    return true;
-  }
   if (session.action === 'prize_add') {
     try {
       const prize = parsePrizeLink(text);
       await verifyPrizeImage(prize);
+      ownerSessions.set(OWNER_ID, { action: 'prize_price', prize });
+      await ctx.reply(`${prize.display_name} NFT uchun qancha referral ball belgilaysiz? 1 dan 1 000 000 gacha butun son yuboring. Bekor qilish: /cancel`);
+    } catch (error) {
+      await ctx.reply(`⚠️ ${error.message}\n\nMasalan: https://t.me/nft/LunarSnake-89030\nQayta yuboring yoki /cancel yozing.`);
+    }
+    return true;
+  }
+  if (session.action === 'prize_price') {
+    const referralsCost = Number(text.trim());
+    if (!Number.isSafeInteger(referralsCost) || referralsCost < 1 || referralsCost > 1000000) {
+      await ctx.reply('Narx 1 dan 1 000 000 gacha bo‘lgan butun son bo‘lishi kerak. Qayta kiriting yoki /cancel yozing.');
+      return true;
+    }
+    try {
+      const prize = session.prize;
       const result = await collections.prizes.updateOne(
         { _id: prize._id },
         {
           $setOnInsert: {
             ...prize,
-            created_at: new Date(),
+              created_at: new Date(),
             created_by: OWNER_ID,
           },
-          $set: { active: true },
+          $set: { active: true, referrals_cost: referralsCost },
         },
         { upsert: true },
       );
       ownerSessions.delete(OWNER_ID);
       await ctx.reply(result.upsertedCount
-        ? `✅ ${prize.display_name} NFT yutuqlar ro‘yxatiga qo‘shildi.`
-        : `ℹ️ ${prize.display_name} ro‘yxatda bor edi; rasmi tekshirildi.`);
+        ? `${prize.display_name} NFT ${referralsCost} referral ball narxi bilan qo‘shildi.`
+        : `${prize.display_name} NFT narxi ${referralsCost} referral ball qilib saqlandi.`);
       await renderPrizes(ctx);
     } catch (error) {
-      await ctx.reply(`⚠️ ${error.message}\n\nMasalan: https://t.me/nft/LunarSnake-89030\nQayta yuboring yoki /cancel yozing.`);
+      await ctx.reply(`NFT narxini saqlab bo‘lmadi: ${error.message}. Qayta yuboring yoki /cancel yozing.`);
     }
     return true;
   }
@@ -750,7 +883,7 @@ bot.start(async (ctx) => {
 });
 
 bot.command('help', async (ctx) => {
-  await ctx.reply('🎁 Do‘stlaringizni botga taklif qiling. Taklif qilgan foydalanuvchi botni ishga tushirib, majburiy kanallarga obuna bo‘lgach hisobga qo‘shiladi. Referral soni va gift holatini Mini App’da ko‘ring.');
+  await ctx.reply('Do‘stlaringizni botga taklif qiling. Taklif qilgan foydalanuvchi botni ishga tushirib, majburiy kanallarga obuna bo‘lgach 1 referral ball olasiz. Balans yetadigan NFT sovg‘ani Mini App’da tanlab, adminga so‘rov yuboring.');
 });
 
 bot.command('admin', async (ctx) => {
@@ -787,41 +920,87 @@ bot.action(/^admin:(.+)$/, async (ctx) => {
   if (action === 'panel') {
     await showOwnerPanel(ctx, true);
   } else if (action === 'stats') {
-    const [users, referrals, pending, delivered, threshold] = await Promise.all([
+    const [users, referrals, pending, delivered, pendingRequests] = await Promise.all([
       collections.campaignUsers.countDocuments({}),
       collections.referrals.countDocuments({}),
       collections.rewards.countDocuments({ status: 'pending' }),
       collections.rewards.countDocuments({ status: 'delivered' }),
-      getReferralThreshold(),
+      collections.giftRequests.countDocuments({ status: 'pending' }),
     ]);
     const text = [
       '📊 Referral statistikasi:',
       `👤 Botni ishga tushirganlar: ${users}`,
-      `✅ Shartni bajargan takliflar: ${referrals}`,
-      `🎯 Yutuq chegarasi: ${threshold || 'sozlanmagan'}`,
-      `🎁 Kutilayotgan giftlar: ${pending}`,
-      `📦 Topshirilgan giftlar: ${delivered}`,
+      `Tasdiqlangan takliflar: ${referrals}`,
+      `Yangi so‘rovlar: ${pendingRequests}`,
+      `Eski mukofot so‘rovlari: ${pending}`,
+      `Eski topshirilgan mukofotlar: ${delivered}`,
     ].join('\n');
     await ctx.editMessageText(text, Markup.inlineKeyboard([
       [callbackButton('🔄 Yangilash', 'admin:stats')],
       [callbackButton('⬅️ Panelga qaytish', 'admin:panel')],
     ]));
-  } else if (action === 'threshold') {
-    const threshold = await getReferralThreshold();
-    ownerSessions.set(OWNER_ID, { action: 'threshold' });
-    await ctx.reply(`🎯 Hozirgi chegara: ${threshold || 'sozlanmagan'}.\nNechta tasdiqlangan taklifdan keyin bitta NFT gift yutish mumkin? Yuboring yoki /cancel yozing.`);
   } else if (action === 'rewards') {
     await showPendingRewards(ctx, true);
   } else if (action === 'prizes') {
     await renderPrizes(ctx, true);
+  } else if (action === 'gift_requests') {
+    await showGiftRequests(ctx, true);
   } else if (action === 'prize_add') {
     ownerSessions.set(OWNER_ID, { action: 'prize_add' });
     await ctx.reply(
-      '💎 Sovg‘a qilmoqchi bo‘lgan haqiqiy Telegram NFT gift havolasini yuboring.\n\n'
+      'Sovg‘a qilmoqchi bo‘lgan haqiqiy Telegram NFT gift havolasini yuboring.\n\n'
         + 'Masalan: https://t.me/nft/LunarSnake-89030\n'
         + 'Telegram NFT havolasi yoki Fragment’dagi gift sahifasi qabul qilinadi. Rasm mavjudligi tekshiriladi. '
-        + 'Faqat o‘zingizda bor va yutuq egasiga topshira oladigan NFT’ni qo‘shing. Bekor qilish: /cancel',
+        + 'Havoladan so‘ng referral ball narxini kiritasiz. Faqat o‘zingizda bor va topshira oladigan NFT’ni qo‘shing. Bekor qilish: /cancel',
     );
+  } else if (action.startsWith('gift_request_approve:') || action.startsWith('gift_request_reject:')) {
+    const approve = action.startsWith('gift_request_approve:');
+    const requestId = action.slice(approve
+      ? 'gift_request_approve:'.length
+      : 'gift_request_reject:'.length);
+    if (!/^[a-f0-9-]{36}$/i.test(requestId)) {
+      await ctx.reply('So‘rov identifikatori noto‘g‘ri.');
+      return;
+    }
+    const giftRequest = await collections.giftRequests.findOneAndUpdate(
+      { _id: requestId, status: 'pending' },
+      {
+        $set: {
+          status: approve ? 'approved' : 'rejected',
+          reviewed_at: new Date(),
+          reviewed_by: OWNER_ID,
+        },
+      },
+      { returnDocument: 'after', includeResultMetadata: false },
+    );
+    if (!giftRequest) {
+      await ctx.reply('Bu so‘rov avval ko‘rib chiqilgan yoki topilmadi.');
+      return;
+    }
+    if (!approve) {
+      const releaseResult = await collections.prizes.updateOne(
+        { _id: giftRequest.prize_id, reservation_token: giftRequest.reservation_token },
+        { $unset: { reserved_by: '', reservation_token: '', reserved_at: '' } },
+      );
+      if (!releaseResult.modifiedCount) {
+        console.error(`Rejected gift request ${requestId}, but its NFT reservation could not be released.`);
+        await ctx.reply('So‘rov rad qilindi, ammo NFT zaxirasini bo‘shatib bo‘lmadi. Sovg‘a holatini qo‘lda tekshiring.');
+      }
+    }
+    const userMessage = approve
+      ? `${giftRequest.prize_display_name} NFT sovg‘a so‘rovingiz qabul qilindi. Admin sovg‘ani sizga topshiradi.`
+      : `${giftRequest.prize_display_name} NFT sovg‘a so‘rovingiz rad etildi. Referral ballaringiz sarflanmadi.`;
+    let userNotified = true;
+    try {
+      await bot.telegram.sendMessage(Number(giftRequest.user_id), userMessage);
+    } catch (error) {
+      userNotified = false;
+      console.error(`Could not notify user ${giftRequest.user_id} about gift request ${requestId}:`, error);
+    }
+    await ctx.reply(
+      `${approve ? 'NFT so‘rovi qabul qilindi.' : 'NFT so‘rovi rad etildi.'}${userNotified ? '' : ' Foydalanuvchiga bot orqali xabar yetkazilmadi.'}`,
+    );
+    await showGiftRequests(ctx);
   } else if (action.startsWith('prize_delete:')) {
     const adminCode = action.slice('prize_delete:'.length);
     if (!/^[a-f0-9]{16}$/.test(adminCode)) {
@@ -913,7 +1092,16 @@ async function launch() {
   }));
 }
 
-launch().catch((error) => {
-  console.error('Bot startup failed:', error);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  launch().catch((error) => {
+    console.error('Bot startup failed:', error);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = {
+  parsePrizeLink,
+  validateWebAppInitData,
+  HttpError,
+  readJsonBody,
+};
