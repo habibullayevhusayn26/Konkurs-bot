@@ -1,0 +1,217 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #10131d;
+  color: #f6f7fb;
+  font-synthesis: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(ellipse at 50% -10%, rgba(113, 81, 245, 0.32), transparent 54%),
+    #10131d;
+}
+
+button {
+  font: inherit;
+}
+
+.page {
+  width: min(100% - 32px, 520px);
+  margin: 0 auto;
+  padding: max(34px, env(safe-area-inset-top)) 0 max(28px, env(safe-area-inset-bottom));
+}
+
+.hero {
+  text-align: center;
+  padding: 18px 8px 28px;
+}
+
+.gift-icon {
+  display: grid;
+  width: 76px;
+  height: 76px;
+  margin: 0 auto 18px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 24px;
+  background: linear-gradient(145deg, #7557fa, #4829bd);
+  box-shadow: 0 14px 36px rgba(93, 61, 226, 0.35);
+  font-size: 38px;
+}
+
+.eyebrow,
+.label {
+  margin: 0;
+  color: #a9a5bc;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 10px 0;
+  font-size: clamp(28px, 8vw, 38px);
+  line-height: 1.12;
+  letter-spacing: -0.04em;
+}
+
+.subtitle,
+.invite-card > p {
+  color: #a9aaba;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.progress-card,
+.invite-card {
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 22px;
+  background: rgba(27, 30, 43, 0.9);
+  box-shadow: 0 16px 50px rgba(0, 0, 0, 0.16);
+}
+
+.progress-card {
+  padding: 22px;
+}
+
+.stats-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.count {
+  margin: 8px 0 0;
+  font-size: 32px;
+  font-weight: 750;
+  letter-spacing: -0.04em;
+}
+
+.count-divider {
+  color: #6c6d7b;
+  font-weight: 400;
+}
+
+.badge {
+  max-width: 145px;
+  padding: 9px 12px;
+  border: 1px solid rgba(173, 157, 255, 0.22);
+  border-radius: 999px;
+  background: rgba(113, 81, 245, 0.13);
+  color: #c4b8ff;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.badge.success {
+  border-color: rgba(89, 220, 160, 0.24);
+  background: rgba(54, 184, 122, 0.12);
+  color: #7de0b0;
+}
+
+.progress-track {
+  height: 10px;
+  margin-top: 22px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #343544;
+}
+
+.progress-fill {
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #9878ff, #d08cff);
+  transition: width 300ms ease;
+}
+
+.progress-caption {
+  margin: 12px 0 0;
+  color: #aaaaba;
+  font-size: 13px;
+}
+
+.invite-card {
+  margin-top: 16px;
+  padding: 22px;
+}
+
+h2 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.invite-card > p {
+  margin: 8px 0 18px;
+}
+
+.link-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 13px;
+  background: #151722;
+}
+
+.link-box span {
+  flex: 1;
+  overflow: hidden;
+  color: #d6d2e4;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.copy-button,
+.share-button {
+  border: 0;
+  border-radius: 11px;
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.copy-button {
+  flex: 0 0 auto;
+  padding: 10px 12px;
+  background: #383344;
+  font-size: 12px;
+}
+
+.share-button {
+  width: 100%;
+  margin-top: 12px;
+  padding: 14px;
+  background: linear-gradient(100deg, #7251ef, #8854e9);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.notice {
+  display: none;
+  margin: 15px 4px 0;
+  color: #ffb3b3;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.notice.visible {
+  display: block;
+}
