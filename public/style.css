@@ -226,6 +226,10 @@ h1 {
   font-size: 9px;
 }
 
+.gift-type.gift-collectible {
+  color: #8fe0b7;
+}
+
 .gift-price {
   display: flex;
   flex-wrap: wrap;
@@ -240,6 +244,10 @@ h1 {
   border-radius: 999px;
   background: rgba(13, 18, 28, 0.36);
   color: #d8e8f3;
+}
+
+.gift-upgrade-price.gift-standard {
+  color: #aeb2c1;
 }
 
 .catalog-message {

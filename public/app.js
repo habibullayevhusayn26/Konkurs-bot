@@ -101,7 +101,7 @@ function renderGiftCatalog(gifts, catalogError) {
     elements.giftGrid.append(createTextElement(
       'p',
       'catalog-message',
-      'Hozir Telegram’da collectible ko‘rinishga yangilanishi mumkin bo‘lgan sovg‘alar topilmadi.',
+      'Telegram hozir katalogda ko‘rsatish uchun sovg‘a qaytarmadi. Keyinroq qayta oching.',
     ));
     return;
   }
@@ -129,11 +129,21 @@ function renderGiftCatalog(gifts, catalogError) {
     const details = document.createElement('div');
     details.className = 'gift-details';
     details.append(createTextElement('h3', 'gift-name', gift.name));
-    details.append(createTextElement('p', 'gift-type', 'NFT upgrade mumkin'));
+    details.append(createTextElement(
+      'p',
+      gift.upgradeStarCount === null ? 'gift-type' : 'gift-type gift-collectible',
+      gift.upgradeStarCount === null ? 'Telegram sovg‘asi' : 'NFT upgrade mumkin',
+    ));
     const price = document.createElement('p');
     price.className = 'gift-price';
     price.append(createTextElement('span', 'gift-star-price', `⭐ ${formatter.format(gift.starCount)}`));
-    price.append(createTextElement('span', 'gift-upgrade-price', `⬆ ${formatter.format(gift.upgradeStarCount)}`));
+    price.append(createTextElement(
+      'span',
+      gift.upgradeStarCount === null ? 'gift-upgrade-price gift-standard' : 'gift-upgrade-price',
+      gift.upgradeStarCount === null
+        ? 'NFT upgrade ma’lum emas'
+        : `⬆ ${formatter.format(gift.upgradeStarCount)}`,
+    ));
     details.append(price);
     card.append(artwork, details);
     elements.giftGrid.append(card);

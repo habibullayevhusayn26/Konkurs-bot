@@ -210,8 +210,10 @@ async function getCollectibleGiftCatalog() {
       }
 
       const gifts = result.gifts
-        .filter((gift) => Number.isInteger(gift.upgrade_star_count)
-          && gift.upgrade_star_count > 0
+        .filter((gift) => gift
+          && typeof gift.id === 'string'
+          && gift.sticker
+          && typeof gift.sticker.file_id === 'string'
           && (!Number.isInteger(gift.remaining_count) || gift.remaining_count > 0))
         .map((gift) => ({
           id: gift.id,
@@ -219,7 +221,9 @@ async function getCollectibleGiftCatalog() {
             ? gift.name
             : `Telegram sovg‘asi #${gift.id.slice(-5)}`,
           starCount: gift.star_count,
-          upgradeStarCount: gift.upgrade_star_count,
+          upgradeStarCount: Number.isInteger(gift.upgrade_star_count) && gift.upgrade_star_count > 0
+            ? gift.upgrade_star_count
+            : null,
           totalCount: Number.isInteger(gift.total_count) ? gift.total_count : null,
           remainingCount: Number.isInteger(gift.remaining_count) ? gift.remaining_count : null,
           emoji: gift.sticker.emoji || '🎁',
