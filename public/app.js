@@ -9,6 +9,7 @@ const elements = {
   notice: document.getElementById('notice'),
   availability: document.getElementById('gift-availability'),
   shopToggle: document.getElementById('gift-shop-toggle'),
+  giftCount: document.getElementById('gift-count'),
   shop: document.getElementById('gift-shop'),
   giftGrid: document.getElementById('gift-grid'),
   selection: document.getElementById('gift-selection'),
@@ -59,26 +60,23 @@ function openGiftDetails(prize) {
   elements.dialogName.textContent = prize.display_name;
   elements.dialogModel.textContent = prize.model;
   elements.dialogCost.textContent = `${formatter.format(prize.referrals_cost)} referral ball`;
-  elements.dialogSelect.disabled = prize.is_reserved || prize.referrals_cost > campaign.referralBalance;
-  elements.dialogSelect.textContent = prize.is_reserved
-    ? 'So‘rov ko‘rib chiqilmoqda'
-    : prize.referrals_cost > campaign.referralBalance
-      ? 'Balans yetarli emas'
-      : 'Shu sovg‘ani tanlash';
+  elements.dialogSelect.disabled = prize.referrals_cost > campaign.referralBalance;
+  elements.dialogSelect.textContent = prize.referrals_cost > campaign.referralBalance
+    ? 'Balans yetarli emas'
+    : 'Shu sovg‘ani tanlash';
   elements.dialogSelect.onclick = () => selectPrize(prize);
   elements.dialog.showModal();
 }
 
 function renderGiftCatalog(prizes) {
   elements.giftGrid.replaceChildren();
-  const availablePrizes = prizes.filter((prize) => !prize.is_reserved);
-  const affordablePrizes = availablePrizes.filter(
+  const affordablePrizes = prizes.filter(
     (prize) => prize.referrals_cost <= campaign.referralBalance,
   );
   elements.shopToggle.hidden = affordablePrizes.length === 0 || Boolean(campaign.giftRequest);
   elements.shop.hidden = true;
   elements.availability.hidden = affordablePrizes.length > 0 && !campaign.giftRequest;
-  elements.shopToggle.textContent = `NFT gift tanlash (${formatter.format(affordablePrizes.length)})`;
+  elements.giftCount.textContent = formatter.format(affordablePrizes.length).padStart(2, '0');
   elements.selection.hidden = true;
   elements.request.hidden = true;
   selectedPrize = null;
@@ -90,7 +88,7 @@ function renderGiftCatalog(prizes) {
   }
 
   if (!affordablePrizes.length) {
-    const message = availablePrizes.length
+    const message = prizes.length
       ? 'Balansingizga mos NFT sovg‘a hozircha yo‘q. Referral yig‘ishda davom eting.'
       : 'Hozircha tanlash uchun NFT sovg‘a mavjud emas.';
     elements.availability.textContent = message;

@@ -3,78 +3,210 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <meta name="theme-color" content="#111827">
-    <title>NFT Gift Referral</title>
+    <meta name="theme-color" content="#0b1020">
+    <title>NFT Gift Studio</title>
     <link rel="stylesheet" href="/style.css">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script defer src="/app.js"></script>
   </head>
   <body>
+    <div class="ambient ambient-one" aria-hidden="true"></div>
+    <div class="ambient ambient-two" aria-hidden="true"></div>
     <main class="page">
+      <nav class="topbar" aria-label="Asosiy">
+        <a class="brand" href="#" aria-label="Gift Studio bosh sahifa">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 40 40" fill="none">
+              <path d="M20 3.8 36.2 13v14L20 36.2 3.8 27V13L20 3.8Z" stroke="currentColor" stroke-width="1.6"/>
+              <path d="m20 10 9 5.2v9.6L20 30l-9-5.2v-9.6L20 10Z" stroke="currentColor" stroke-width="1.6"/>
+              <path d="m11 15.2 9 5.3 9-5.3M20 20.5V30" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+            </svg>
+          </span>
+          <span class="brand-name">GIFT<span>STUDIO</span></span>
+        </a>
+        <span class="topbar-note"><span class="status-dot"></span> TELEGRAM MINI APP</span>
+      </nav>
+
       <header class="hero">
-        <div class="gift-mark" aria-hidden="true">NFT</div>
-        <p class="eyebrow">NFT GIFT CAMPAIGN</p>
-        <h1>Do‘stlarni taklif qiling,<br>gift tanlang</h1>
-        <p class="subtitle">Do‘stingiz botni ishga tushirib, majburiy kanallarga obuna bo‘lgach taklifingiz hisoblanadi. Har bir tasdiqlangan taklif 1 ball beradi.</p>
+        <div class="hero-copy">
+          <p class="eyebrow"><span class="eyebrow-line"></span> REFER. COLLECT. REPEAT.</p>
+          <h1>Yaxshi do‘stlar.<br><span>Yaxshi sovg‘alar.</span></h1>
+          <p class="subtitle">Do‘stlaringizni taklif qiling, referral ball to‘plang va kolleksiyangizga yangi NFT qo‘shing.</p>
+          <a class="hero-link" href="#invite-section">
+            Do‘stni taklif qilish
+            <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M4 10h12m-5-5 5 5-5 5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </a>
+        </div>
+        <div class="hero-art" aria-hidden="true">
+          <div class="orbit orbit-one"></div>
+          <div class="orbit orbit-two"></div>
+          <div class="hero-gem">
+            <svg viewBox="0 0 180 180" fill="none">
+              <path d="m90 15 57 31v66l-57 38-57-38V46l57-31Z" fill="url(#gem-fill)" fill-opacity=".9" stroke="#B8FFF0" stroke-opacity=".85" stroke-width="1.4"/>
+              <path d="m90 15 17 51-17 84-17-84 17-51Z" fill="#DCFFF7" fill-opacity=".17" stroke="#DCFFF7" stroke-opacity=".5"/>
+              <path d="M33 46h114M33 112h114M73 66h34" stroke="#E8FFFA" stroke-opacity=".7"/>
+              <path d="m62 46 11 20m45-20-11 20M33 46l40 20-17 46-23-34m114-32-40 20 17 46 23-34" stroke="#E8FFFA" stroke-opacity=".55"/>
+              <defs>
+                <linearGradient id="gem-fill" x1="38" y1="26" x2="143" y2="142" gradientUnits="userSpaceOnUse">
+                  <stop stop-color="#BFFFF1"/>
+                  <stop offset=".46" stop-color="#55DCC2"/>
+                  <stop offset="1" stop-color="#5546C8"/>
+                </linearGradient>
+              </defs>
+            </svg>
+          </div>
+          <span class="orbit-label orbit-label-top">01 / INVITE</span>
+          <span class="orbit-label orbit-label-bottom">02 / UNLOCK</span>
+          <span class="art-spark spark-one"></span>
+          <span class="art-spark spark-two"></span>
+        </div>
+        <div class="hero-index" aria-hidden="true">G / 01</div>
       </header>
 
-      <section class="progress-card" aria-live="polite">
-        <div class="stats-row">
+      <section class="balance-panel" aria-live="polite">
+        <div class="balance-intro">
+          <span class="balance-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none">
+              <path d="M12 3.5 14.5 9.5 21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5L12 3.5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+            </svg>
+          </span>
           <div>
-            <p class="label">Referral balansi</p>
-            <p class="count"><span id="referral-balance">—</span><span class="count-unit">ball</span></p>
-            <p class="referral-summary">Tasdiqlangan takliflar: <span id="referral-count">—</span></p>
+            <p class="label">SIZNING BALANSINGIZ</p>
+            <p class="balance-caption">Har bir tasdiqlangan do‘st +1 ball</p>
           </div>
-          <div class="badge" id="gift-status">Yuklanmoqda</div>
         </div>
+        <div class="balance-value"><span id="referral-balance">—</span><span>ball</span></div>
+        <div class="balance-divider"></div>
+        <div class="balance-stat">
+          <span class="stat-value" id="referral-count">—</span>
+          <span class="stat-label">tasdiqlangan<br>taklif</span>
+        </div>
+        <div class="badge" id="gift-status">Yuklanmoqda</div>
       </section>
 
       <section class="prizes-section" aria-labelledby="prizes-title">
         <div class="section-heading">
           <div>
-            <p class="eyebrow">HAQIQIY NFT SOVG‘ALAR</p>
-            <h2 id="prizes-title">Sovg‘alar do‘koni</h2>
+            <p class="eyebrow"><span class="eyebrow-line"></span> THE DROP</p>
+            <h2 id="prizes-title">Sovg‘alar <span>galereyasi</span></h2>
+          </div>
+          <div class="section-stamp" aria-label="Cheksiz so‘rov">
+            <svg viewBox="0 0 32 32" fill="none" aria-hidden="true">
+              <path d="M8.3 12a8 8 0 0 1 13.7-4.7L24 9m0 0V4m0 5h-5.2M23.7 20a8 8 0 0 1-13.7 4.7L8 23m0 0v5m0-5h5.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span>CHEKSIZ<br>SO‘ROV</span>
           </div>
         </div>
-        <p class="catalog-description">Balansingiz yetadigan sovg‘ani tanlang. Tanlov adminga so‘rov sifatida yuboriladi.</p>
+        <p class="catalog-description">Katalogdagi sovg‘alar cheklanmagan. Bir xil katalog sovg‘asiga balansingiz yetganicha qayta-qayta so‘rov yuborishingiz mumkin.</p>
         <p class="catalog-message" id="gift-availability" aria-live="polite">Sovg‘alar yuklanmoqda…</p>
-        <button class="shop-toggle" id="gift-shop-toggle" type="button" aria-expanded="false" hidden>NFT gift tanlash</button>
-        <div id="gift-shop" hidden>
+        <button class="shop-toggle" id="gift-shop-toggle" type="button" aria-expanded="false" hidden>
+          <span class="toggle-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none">
+              <path d="M4 7h16l-1.5 13h-13L4 7Zm4 0a4 4 0 0 1 8 0" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </span>
+          <span>NFT sovg‘alarni ko‘rish</span>
+          <span class="toggle-count" id="gift-count">00</span>
+          <svg class="toggle-arrow" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path d="m5 7.5 5 5 5-5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <div class="shop-shell" id="gift-shop" hidden>
           <div class="gift-grid" id="gift-grid" aria-live="polite"></div>
           <div class="gift-selection" id="gift-selection" hidden>
-            <div>
-              <p class="label">Tanlangan sovg‘a</p>
+            <div class="selection-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="m5 12 4.5 4.5L19 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </div>
+            <div class="selection-copy">
+              <p class="label">TANLOVINGIZ</p>
               <p class="selected-gift-name" id="selected-gift-name"></p>
               <p class="selected-gift-cost" id="selected-gift-cost"></p>
             </div>
           </div>
-          <button class="request-button" id="request-button" type="button" hidden>Olish uchun so‘rov yuborish</button>
+          <button class="request-button" id="request-button" type="button" hidden>
+            Olish uchun so‘rov yuborish
+            <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M4 10h12m-5-5 5 5-5 5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
         </div>
       </section>
 
-      <section class="invite-card">
-        <h2>Shaxsiy taklif havolangiz</h2>
-        <p>Havolani do‘stlaringiz bilan ulashing. Har bir yangi foydalanuvchi faqat bir marta hisoblanadi.</p>
+      <section class="invite-card" id="invite-section">
+        <div class="invite-topline">
+          <span class="invite-icon" aria-hidden="true">
+            <svg viewBox="0 0 32 32" fill="none">
+              <path d="M20 27v-2.5a5 5 0 0 0-5-5h-7a5 5 0 0 0-5 5V27m8.5-12a5 5 0 1 0 0-10 5 5 0 0 0 0 10Zm10-5h8m-4-4v8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </span>
+          <p class="eyebrow"><span class="eyebrow-line"></span> SPREAD THE WORD</p>
+        </div>
+        <h2>Yaxshilikni <span>ulashing.</span></h2>
+        <p class="invite-description">Do‘stingiz botni ishga tushirib, majburiy kanallarga obuna bo‘lsa, balansingizga ball qo‘shiladi.</p>
         <div class="link-box">
+          <span class="link-symbol" aria-hidden="true">
+            <svg viewBox="0 0 20 20" fill="none">
+              <path d="M8 12 12 8m-6 7H5a4 4 0 0 1 0-8h3m4 0h3a4 4 0 1 1 0 8h-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+          </span>
           <span id="invite-link">Havola yuklanmoqda…</span>
-          <button class="copy-button" id="copy-button" type="button" disabled>Nusxa</button>
+          <button class="copy-button" id="copy-button" type="button" disabled aria-label="Havolani nusxalash">
+            <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <rect x="7" y="6" width="9" height="11" rx="2" stroke="currentColor" stroke-width="1.4"/>
+              <path d="M12 6V4.5A1.5 1.5 0 0 0 10.5 3h-6A1.5 1.5 0 0 0 3 4.5v8A1.5 1.5 0 0 0 4.5 14H7" stroke="currentColor" stroke-width="1.4"/>
+            </svg>
+          </button>
         </div>
-        <button class="share-button" id="share-button" type="button" disabled>Do‘stga ulashish</button>
+        <button class="share-button" id="share-button" type="button" disabled>
+          <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path d="M10 13V3m0 0L6.5 6.5M10 3l3.5 3.5M4 11.5v4A1.5 1.5 0 0 0 5.5 17h9a1.5 1.5 0 0 0 1.5-1.5v-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          Do‘stga ulashish
+          <svg class="share-arrow" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path d="M5 15 15 5m0 0H7m8 0v8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
       </section>
 
+      <footer class="footer">
+        <span>GIFT STUDIO <span class="footer-dot">/</span> COMMUNITY REWARDS</span>
+        <span class="footer-privacy">
+          <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M8 2 13 4v3.5c0 3.3-2.1 5.4-5 6.5-2.9-1.1-5-3.2-5-6.5V4l5-2Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+            <path d="m5.8 7.8 1.5 1.5 3-3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          Maxfiylik himoyalangan
+        </span>
+      </footer>
       <p class="notice" id="notice" role="status"></p>
     </main>
+
     <dialog class="gift-dialog" id="gift-dialog" aria-labelledby="gift-dialog-name">
       <div class="gift-dialog-content">
-        <button class="dialog-close" id="gift-dialog-close" type="button" aria-label="Yopish">Yopish</button>
+        <button class="dialog-close" id="gift-dialog-close" type="button" aria-label="Yopish">
+          <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path d="m5 5 10 10M15 5 5 15" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+          </svg>
+        </button>
         <div class="gift-detail-artwork">
+          <div class="detail-glow"></div>
           <img id="gift-dialog-image" src="" alt="">
+          <span class="detail-edition">DIGITAL COLLECTIBLE</span>
         </div>
-        <p class="eyebrow">NFT GIFT</p>
+        <p class="eyebrow"><span class="eyebrow-line"></span> COLLECTIBLE / 001</p>
         <h2 id="gift-dialog-name"></h2>
         <p class="gift-dialog-model" id="gift-dialog-model"></p>
         <p class="gift-dialog-cost" id="gift-dialog-cost"></p>
-        <p class="privacy-note">Sovg‘a egasining shaxsiy ma’lumotlari ko‘rsatilmaydi.</p>
+        <p class="privacy-note">
+          <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M8 2 13 4v3.5c0 3.3-2.1 5.4-5 6.5-2.9-1.1-5-3.2-5-6.5V4l5-2Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+          </svg>
+          NFT egasining shaxsiy ma’lumotlari ko‘rsatilmaydi.
+        </p>
         <button class="request-button" id="gift-dialog-select" type="button">Shu sovg‘ani tanlash</button>
       </div>
     </dialog>

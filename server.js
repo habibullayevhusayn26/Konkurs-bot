@@ -282,13 +282,9 @@ async function verifyPrizeImage(prize) {
   }
 }
 
-async function getCampaignPrizes(userId, includeAdminCode = false) {
-  const availabilityFilter = userId
-    ? { $or: [{ reservation_token: { $exists: false } }, { reserved_by: userId }] }
-    : { reservation_token: { $exists: false } };
-  const prizes = await collections.prizes.find({ active: true, ...availabilityFilter })
-    .sort(userId ? { reservation_token: -1, created_at: -1 } : { created_at: -1 })
-    .limit(100)
+async function getCampaignPrizes(includeAdminCode = false) {
+  const prizes = await collections.prizes.find({ active: true })
+    .sort({ created_at: -1 })
     .project({
       _id: 1,
       model: 1,
@@ -298,18 +294,13 @@ async function getCampaignPrizes(userId, includeAdminCode = false) {
       fragment_url: 1,
       image_url: 1,
       referrals_cost: 1,
-      reserved_by: 1,
       ...(includeAdminCode ? { admin_code: 1 } : {}),
     })
     .toArray();
-  return prizes.map((prize) => {
-    const { reserved_by: reservedBy, ...publicPrize } = prize;
-    return {
-      ...publicPrize,
-      referrals_cost: Number.isSafeInteger(publicPrize.referrals_cost) ? publicPrize.referrals_cost : 1,
-      is_reserved: Boolean(userId && reservedBy === userId),
-    };
-  });
+  return prizes.map((prize) => ({
+    ...prize,
+    referrals_cost: Number.isSafeInteger(prize.referrals_cost) ? prize.referrals_cost : 1,
+  }));
 }
 
 async function qualifyReferral(userId) {
@@ -381,7 +372,7 @@ async function getCampaignStats(userId) {
     collections.giftRequests.find({ user_id: userId, status: 'approved' })
       .project({ referrals_cost: 1 })
       .toArray(),
-    getCampaignPrizes(userId),
+    getCampaignPrizes(),
   ]);
   const spentReferrals = acceptedRequests.reduce((total, request) => total + request.referrals_cost, 0)
     + (pendingRequest ? pendingRequest.referrals_cost : 0);
@@ -555,35 +546,17 @@ async function handleHttpRequest(req, res) {
     const prize = await collections.prizes.findOne({
       _id: body.prizeId,
       active: true,
-      reservation_token: { $exists: false },
     });
     if (!prize) {
-      throw new HttpError(409, 'Bu NFT endi mavjud emas. Sovg‘alar ro‘yxatini yangilang.');
+      throw new HttpError(409, 'Bu sovg‘a katalogda topilmadi. Sovg‘alar ro‘yxatini yangilang.');
     }
     const referralsCost = Number.isSafeInteger(prize.referrals_cost) ? prize.referrals_cost : 1;
     if (referralBalance < referralsCost) {
       throw new HttpError(409, `Bu NFT uchun ${referralsCost} ball kerak. Joriy balansingiz: ${referralBalance}.`);
     }
 
-    const requestId = crypto.randomUUID();
-    const reservationToken = `request-${requestId}`;
-    const reservedPrize = await collections.prizes.findOneAndUpdate(
-      { _id: prize._id, active: true, reservation_token: { $exists: false } },
-      {
-        $set: {
-          reserved_by: userId,
-          reservation_token: reservationToken,
-          reserved_at: new Date(),
-        },
-      },
-      { returnDocument: 'after', includeResultMetadata: false },
-    );
-    if (!reservedPrize) {
-      throw new HttpError(409, 'Bu NFT endi mavjud emas. Sovg‘alar ro‘yxatini yangilang.');
-    }
-
     const giftRequest = {
-      _id: requestId,
+      _id: crypto.randomUUID(),
       user_id: userId,
       first_name: profile ? profile.first_name : telegramUser.first_name || '',
       username: profile ? profile.username : telegramUser.username || null,
@@ -592,16 +565,11 @@ async function handleHttpRequest(req, res) {
       prize_telegram_url: prize.telegram_url,
       referrals_cost: referralsCost,
       status: 'pending',
-      reservation_token: reservationToken,
       created_at: new Date(),
     };
     try {
       await collections.giftRequests.insertOne(giftRequest);
     } catch (error) {
-      await collections.prizes.updateOne(
-        { _id: prize._id, reservation_token: reservationToken },
-        { $unset: { reserved_by: '', reservation_token: '', reserved_at: '' } },
-      );
       if (error.code === 11000) {
         throw new HttpError(409, 'Sizda admin ko‘rib chiqayotgan sovg‘a so‘rovi bor.');
       }
@@ -612,7 +580,7 @@ async function handleHttpRequest(req, res) {
     try {
       await bot.telegram.sendMessage(
         Number(OWNER_ID),
-        `Yangi NFT sovg‘a so‘rovi\n\nFoydalanuvchi: ${requester}\nTelegram ID: ${userId}\nNFT: ${prize.display_name}\nNarxi: ${referralsCost} referral ball`,
+        `Yangi NFT sovg‘a so‘rovi\n\nFoydalanuvchi: ${requester}\nTelegram ID: ${userId}\nNFT: ${prize.display_name}\nNarxi: ${referralsCost} referral ball\nBu NFT sovg‘a katalogida cheksiz mavjud.`,
         Markup.inlineKeyboard([
           [
             callbackButton('Qabul qilish', `admin:gift_request_approve:${requestId}`, 'success'),
@@ -694,7 +662,7 @@ async function renderChannels(ctx, edit = false) {
 }
 
 async function renderPrizes(ctx, edit = false) {
-  const prizes = await getCampaignPrizes(undefined, true);
+  const prizes = await getCampaignPrizes(true);
   for (const prize of prizes) {
     if (!prize.admin_code) {
       prize.admin_code = crypto.randomBytes(8).toString('hex');
@@ -710,7 +678,7 @@ async function renderPrizes(ctx, edit = false) {
   rows.push([callbackButton('➕ NFT havolasi qo‘shish', 'admin:prize_add', 'success')]);
   rows.push([callbackButton('⬅️ Panelga qaytish', 'admin:panel')]);
   const text = prizes.length
-    ? `NFT sovg‘alar (${prizes.length}):\n\n${prizes.map((prize, index) => `${index + 1}. ${prize.display_name} — ${prize.referrals_cost || 1} referral ball\n${prize.telegram_url}`).join('\n\n')}\n\nFaqat sovg‘a qilishga tayyor, o‘zingizga tegishli giftlarni qo‘shing.`
+    ? `NFT sovg‘alar (${prizes.length}):\n\n${prizes.map((prize, index) => `${index + 1}. ${prize.display_name} — ${prize.referrals_cost || 1} referral ball\n${prize.telegram_url}`).join('\n\n')}\n\nHar bir katalog sovg‘asi foydalanuvchi so‘rovlari uchun cheksiz takrorlanadi.`
     : '💎 Hozircha NFT yutuqlari qo‘shilmagan. Faqat sovg‘a qilishga tayyor, o‘zingizga tegishli Telegram NFT havolasini kiriting.';
   if (edit && ctx.callbackQuery && ctx.callbackQuery.message) {
     await ctx.editMessageText(text, Markup.inlineKeyboard(rows));
@@ -951,7 +919,7 @@ bot.action(/^admin:(.+)$/, async (ctx) => {
       'Sovg‘a qilmoqchi bo‘lgan haqiqiy Telegram NFT gift havolasini yuboring.\n\n'
         + 'Masalan: https://t.me/nft/LunarSnake-89030\n'
         + 'Telegram NFT havolasi yoki Fragment’dagi gift sahifasi qabul qilinadi. Rasm mavjudligi tekshiriladi. '
-        + 'Havoladan so‘ng referral ball narxini kiritasiz. Faqat o‘zingizda bor va topshira oladigan NFT’ni qo‘shing. Bekor qilish: /cancel',
+        + 'Havoladan so‘ng referral ball narxini kiritasiz. Bir katalog sovg‘asi cheksiz so‘ralishi mumkin; har bir qabul qilingan so‘rov uchun mos NFT’ni qo‘lda topshirishingiz kerak. Bekor qilish: /cancel',
     );
   } else if (action.startsWith('gift_request_approve:') || action.startsWith('gift_request_reject:')) {
     const approve = action.startsWith('gift_request_approve:');
@@ -977,16 +945,6 @@ bot.action(/^admin:(.+)$/, async (ctx) => {
       await ctx.reply('Bu so‘rov avval ko‘rib chiqilgan yoki topilmadi.');
       return;
     }
-    if (!approve) {
-      const releaseResult = await collections.prizes.updateOne(
-        { _id: giftRequest.prize_id, reservation_token: giftRequest.reservation_token },
-        { $unset: { reserved_by: '', reservation_token: '', reserved_at: '' } },
-      );
-      if (!releaseResult.modifiedCount) {
-        console.error(`Rejected gift request ${requestId}, but its NFT reservation could not be released.`);
-        await ctx.reply('So‘rov rad qilindi, ammo NFT zaxirasini bo‘shatib bo‘lmadi. Sovg‘a holatini qo‘lda tekshiring.');
-      }
-    }
     const userMessage = approve
       ? `${giftRequest.prize_display_name} NFT sovg‘a so‘rovingiz qabul qilindi. Admin sovg‘ani sizga topshiradi.`
       : `${giftRequest.prize_display_name} NFT sovg‘a so‘rovingiz rad etildi. Referral ballaringiz sarflanmadi.`;
@@ -1010,7 +968,6 @@ bot.action(/^admin:(.+)$/, async (ctx) => {
     const result = await collections.prizes.deleteOne({
       admin_code: adminCode,
       active: true,
-      reservation_token: { $exists: false },
     });
     await ctx.reply(result.deletedCount ? '✅ NFT yutuqlar ro‘yxatidan olib tashlandi.' : 'ℹ️ NFT topilmadi yoki avval olib tashlangan.');
     await renderPrizes(ctx);

@@ -28,8 +28,8 @@ Bot va Mini App bir xil domen orqali xizmat qilishi kerak, chunki Mini App API s
 - Taklif faqat botning shaxsiy chatida ilgari qayd etilmagan yangi foydalanuvchi `/start` bosib, barcha majburiy kanallarga obuna bo‘lgach hisoblanadi.
 - Bir Telegram akkaunti faqat bir marta hisoblanadi; o‘zini taklif qilish hisoblanmaydi.
 - Har bir tasdiqlangan referral foydalanuvchi balansiga 1 ball qo‘shadi.
-- Mini App balans yetadigan NFT sovg‘alarni ko‘rsatadi. Foydalanuvchi sovg‘ani tanlab so‘rov yuboradi; NFT vaqtincha zaxiralanadi va admin bot orqali xabar oladi.
-- Admin so‘rovni qabul qilganda ball sarflanadi; rad qilganda NFT fondga qaytadi va ball sarflanmaydi.
+- Mini App balans yetadigan NFT sovg‘alarni ko‘rsatadi. Katalogdagi har bir sovg‘a cheksiz so‘ralishi mumkin; bir xil katalog sovg‘asiga bir necha marta buyurtma berish mumkin. Foydalanuvchi sovg‘ani tanlab so‘rov yuboradi va admin bot orqali xabar oladi.
+- Admin so‘rovni qabul qilganda ball sarflanadi; rad qilganda ball sarflanmaydi. Har bir qabul qilingan so‘rov uchun admin sovg‘ani qo‘lda topshiradi.
 - Mini App Telegram `initData` imzosini serverda tekshiradi va eskirgan imzolarni rad etadi.
 - Mini App’da NFT’larning haqiqiy rasmi, modeli va seriya raqami ko‘rsatiladi. Sovg‘a tafsilotida egasining shaxsiy ma’lumoti oshkor qilinmaydi. NFT rasmi `nft.fragment.com` manzilidan yuklanadi; oddiy Stars gift katalogidan foydalanilmaydi.
 
@@ -37,14 +37,14 @@ Bot va Mini App bir xil domen orqali xizmat qilishi kerak, chunki Mini App API s
 
 Admin panelidagi **NFT sovg‘alarini boshqarish** bo‘limidan `https://t.me/nft/Model-123` formatidagi haqiqiy collectible NFT havolasini qo‘shing. Fragment’dagi gift sahifasi havolasi ham qabul qilinadi. Keyin narxni referral ballarda kiriting. Bot Fragment’dan rasm mavjudligini tekshiradi, lekin havola NFT sizga tegishli ekanini tasdiqlamaydi. Faqat o‘zingiz egalik qiladigan va sovg‘a qila oladigan NFT’larni kiriting.
 
-Har bir NFT bir vaqtning o‘zida faqat bitta so‘rov uchun zaxiralanadi. Foydalanuvchida admin ko‘rib chiqayotgan so‘rov bo‘lsa, yana bir so‘rov yubora olmaydi.
+Katalogdagi sovg‘a uchun so‘rovlar soni cheklanmagan; bir xil katalog sovg‘asini bir nechta foydalanuvchi so‘rashi mumkin. Haqiqiy NFT’lar noyob bo‘lgani uchun admin har bir qabul qilingan so‘rovga mos alohida sovg‘ani qo‘lda topshirishi kerak. Bir foydalanuvchida admin ko‘rib chiqayotgan so‘rov bo‘lsa, admin qaroriga qadar yana bir so‘rov yubora olmaydi.
 
 ## Admin panel
 
 Bot egasining shaxsiy chatida `/admin` yuboring:
 
 - **Referral statistikasi** — foydalanuvchilar, tasdiqlangan takliflar va kutilayotgan so‘rovlar.
-- **NFT sovg‘alarini boshqarish** — haqiqiy NFT havolasini va ball narxini qo‘shish yoki zaxiralanmagan NFT’ni olib tashlash.
+- **NFT sovg‘alarini boshqarish** — haqiqiy NFT havolasini va ball narxini qo‘shish yoki katalogdan olib tashlash.
 - **NFT so‘rovlari** — foydalanuvchi so‘rovini qabul qilish yoki rad etish. So‘rov xabari admin’ga bot orqali ham yuboriladi.
 - **Majburiy obuna kanallari** — kanal qo‘shish, tahrirlash yoki o‘chirish. Obunani tekshirish uchun bot kanal administratori bo‘lishi kerak.
 
