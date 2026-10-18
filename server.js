@@ -297,30 +297,96 @@ const PREMIUM_PURCHASES = new Map([
   [12, 2500],
 ]);
 const MESSAGE_EMOJI_IDS = {
-  greeting: '5462910521739063094',
-  miniApp: '5328050550099427291',
-  balance: '5393163448307705594',
+  greeting: '5461117441612462242',
+  miniApp: '5203996991054432397',
+  balance: '5375296873982604963',
   invite: '5453957997418004470',
-  referralSummary: '5231476153159546957',
-  confirmed: '5386836029472790744',
+  referralSummary: '5463289097336405244',
+  confirmed: '5217497254381754877',
   spend: '5226656353744862682',
   link: '5393243708361567810',
-  reward: '5467403804855016559',
-  subscription: '5231354927707616568',
-  checkSubscription: '5465542769755826716',
-  home: '5273934700904211787',
-  tools: '5462921117423384478',
-  section: '5431736674147114227',
-  search: '5231012545799666522',
-  stats: '5240433578038289959',
-  requests: '5334887566804016544',
-  pending: '5213452215527677338',
-  channels: '5348096880456791703',
+  reward: '5203996991054432397',
+  subscription: '5424818078833715060',
+  checkSubscription: '5217497254381754877',
+  home: '5229198454693069096',
+  tools: '5341715473882955310',
+  section: '5215644719022874555',
+  search: '5373012449597335010',
+  stats: '5460939698685898828',
+  requests: '5406631276042002796',
+  pending: '5188671392396109696',
+  channels: '5424818078833715060',
   user: '5373012449597335010',
-  admins: '5219827798125846744',
-  empty: '5352896944496728039',
-  channelSection: '5388997523304112754',
+  admins: '5453957997418004470',
+  empty: '5215324073944423501',
+  channelSection: '5424818078833715060',
+  broadcastMedia: '5247123358968989931',
+  broadcastText: '5393314064220843793',
+  broadcastButtons: '5215327492738392838',
 };
+const BUTTON_EMOJI_IDS = new Map(Object.entries({
+  '📢': '5217943819311389632',
+  '💬': '5274050385848328482',
+  '📣': '5424818078833715060',
+  '➕': '5397916757333654639',
+  '✏️': '5395444784611480792',
+  '🗑': '5247158710844804538',
+  '🔐': '5231153283288038709',
+  '📊': '5460939698685898828',
+  '👥': '5453957997418004470',
+  '🎁': '5203996991054432397',
+  '📨': '5406631276042002796',
+  '🔄': '5375338737028841420',
+  '⬅️': '5229198454693069096',
+  '➡️': '5229217511462962422',
+  '🔔': '5273813797574828503',
+  '✅': '5217497254381754877',
+  '❌': '5465665476971471368',
+  '🔗': '5393243708361567810',
+  '🤖': '5372981976804366741',
+  '🔵': '5231031220317484418',
+  '🟢': '5231365622176184397',
+  '🔴': '5228712934410060814',
+  '🚀': '5445284980978621387',
+  '❓': '5463139580934892960',
+  '💰': '5375296873982604963',
+  '🤝': '5228988173094256065',
+  '🏆': '5226431245918942763',
+  '🎉': '5461151367559141950',
+  '👤': '5373012449597335010',
+  '⭐️': '5463289097336405244',
+  '🎟': '5377599075237502153',
+  '⏳': '5188671392396109696',
+  '📦': '5463172695132745432',
+  '💎': '5393396291369725822',
+  '💳': '5393298048287797847',
+  '🛒': '5226656353744862682',
+  '🖼': '5247123358968989931',
+  '📤': '5433614747381538714',
+  '🗣': '5391054700969748211',
+  '🔘': '5228684239733556102',
+  '📝': '5334882760735598374',
+  '🌐': '5447410659077661506',
+  '⚙️': '5341715473882955310',
+  'ℹ️': '5215644719022874555',
+  '🛡': '5215669479509335000',
+  '📥': '5215324073944423501',
+  '🫶': '5213274008744632782',
+  '♾': '5215659875962462292',
+  '‼️': '5393263186038254710',
+  '💸': '5390943233683515660',
+  '🙃': '5393620209489704357',
+  '☠️': '5393174147071242969',
+  '😎': '5372965329511139384',
+  '©': '5323442290708985472',
+  '👑': '5217822164362739968',
+  '💱': '5402186569006210455',
+  '🗣️': '5460795800101594035',
+  '▶️': '5348125953090403204',
+  '✔️': '5206607081334906820',
+  '☄️': '5224607267797606837',
+  '🙂': '5461117441612462242',
+}));
 const BOT_EMOJI_PATTERN = /(?:\p{Extended_Pictographic}(?:\uFE0F|\uFE0E)?\p{Emoji_Modifier}?(?:\u200D\p{Extended_Pictographic}(?:\uFE0F|\uFE0E)?\p{Emoji_Modifier}?)*)|(?:\p{Regional_Indicator}{2})|(?:[#*0-9]\uFE0F?\u20E3)/gu;
 
 function customEmojiTag(emojiId, fallback) {
@@ -883,9 +949,9 @@ async function qualifyReferral(userId) {
   if (!result.upsertedCount) return;
   const inviteeName = [user.first_name, user.last_name].filter(Boolean).join(' ') || 'Yangi foydalanuvchi';
   const username = user.username ? `\nUsername: @${escapeHtml(user.username)}` : '';
-  const notification = `🎉 Referalingiz tasdiqlandi!\n\n`
+  const notification = `${customEmojiTag(BUTTON_EMOJI_IDS.get('🎉'), '🎉')} Referalingiz tasdiqlandi!\n\n`
     + `Foydalanuvchi: <a href="tg://user?id=${encodeURIComponent(userId)}">${escapeHtml(inviteeName)}</a>`
-    + `${username}\nSizga +1 referral ball qo‘shildi.`;
+    + `${username}\n${customEmojiTag(MESSAGE_EMOJI_IDS.reward, '🎁')} Sizga +1 referral ball qo‘shildi.`;
   try {
     await sendText(bot.telegram, Number(user.referred_by), notification, { parse_mode: 'HTML' });
   } catch (error) {
@@ -899,25 +965,51 @@ function startReferralPayload(ctx) {
   return match ? match[1] || '' : '';
 }
 
-function addPremiumButtonIcon(button, isPremium) {
+function buttonEmojiId(emoji) {
+  return BUTTON_EMOJI_IDS.get(emoji) || BUTTON_EMOJI_IDS.get(emoji.replace(/\uFE0F/g, ''));
+}
+
+function addPremiumButtonIcon(button, isPremium, preferredEmojiId = null) {
   if (!isPremium) {
     const lowerText = button.text.toLocaleLowerCase();
-    let emojiId = null;
-    if (lowerText.includes('mini app')) emojiId = MESSAGE_EMOJI_IDS.miniApp;
-    else if (lowerText === 'balansim') emojiId = MESSAGE_EMOJI_IDS.balance;
-    else if (lowerText.includes('do‘stni taklif qilish')) emojiId = MESSAGE_EMOJI_IDS.invite;
-    else if (lowerText === 'sotib olish') emojiId = MESSAGE_EMOJI_IDS.spend;
-    else if (lowerText.includes('obunani tekshirish')) emojiId = MESSAGE_EMOJI_IDS.checkSubscription;
-    else if (lowerText.includes('bosh menyu')) emojiId = MESSAGE_EMOJI_IDS.home;
-    else if (lowerText.includes('do‘stga ulashish')) emojiId = MESSAGE_EMOJI_IDS.link;
-    else if (lowerText.includes('referal statistikasi') || lowerText.includes('referral statistikasi')) {
-      emojiId = MESSAGE_EMOJI_IDS.stats;
-    } else if (lowerText.includes('sovg‘a so‘rovlari')) emojiId = MESSAGE_EMOJI_IDS.requests;
-    else if (lowerText.includes('kutilayotgan giftlar')) emojiId = MESSAGE_EMOJI_IDS.pending;
-    else if (lowerText.includes('majburiy kanal obunalari')) emojiId = MESSAGE_EMOJI_IDS.channels;
-    else if (lowerText.includes('foydalanuvchini qidirish')) emojiId = MESSAGE_EMOJI_IDS.user;
-    else if (lowerText.includes('adminlarni boshqarish')) emojiId = MESSAGE_EMOJI_IDS.admins;
-    else if (lowerText.includes('bonus') || lowerText.includes('promokod')) emojiId = MESSAGE_EMOJI_IDS.reward;
+    let emojiId = preferredEmojiId;
+    if (!emojiId) {
+      if (lowerText.includes('mini app')) emojiId = MESSAGE_EMOJI_IDS.miniApp;
+      else if (lowerText === 'balansim') emojiId = MESSAGE_EMOJI_IDS.balance;
+      else if (lowerText.includes('do‘stni taklif qilish')) emojiId = MESSAGE_EMOJI_IDS.invite;
+      else if (lowerText === 'sotib olish') emojiId = MESSAGE_EMOJI_IDS.spend;
+      else if (lowerText.includes('obunani tekshirish')) emojiId = MESSAGE_EMOJI_IDS.checkSubscription;
+      else if (lowerText.includes('bosh menyu')) emojiId = MESSAGE_EMOJI_IDS.home;
+      else if (lowerText.includes('do‘stga ulashish')) emojiId = MESSAGE_EMOJI_IDS.link;
+      else if (lowerText.includes('referal statistikasi') || lowerText.includes('referral statistikasi')) {
+        emojiId = MESSAGE_EMOJI_IDS.stats;
+      } else if (lowerText.includes('sovg‘a so‘rovlari')) emojiId = MESSAGE_EMOJI_IDS.requests;
+      else if (lowerText.includes('kutilayotgan giftlar')) emojiId = MESSAGE_EMOJI_IDS.pending;
+      else if (lowerText.includes('majburiy kanal obunalari')) emojiId = MESSAGE_EMOJI_IDS.channels;
+      else if (lowerText.includes('foydalanuvchini qidirish')) emojiId = MESSAGE_EMOJI_IDS.user;
+      else if (lowerText.includes('adminlarni boshqarish')) emojiId = MESSAGE_EMOJI_IDS.admins;
+      else if (lowerText.includes('bonus') || lowerText.includes('promokod')) emojiId = MESSAGE_EMOJI_IDS.reward;
+      else if (lowerText.includes('admin huquqlari')) emojiId = BUTTON_EMOJI_IDS.get('🔐');
+      else if (lowerText.includes('amallar jurnali')) emojiId = BUTTON_EMOJI_IDS.get('📝');
+      else if (lowerText.includes('qabul') || lowerText.includes('tasdiql')) emojiId = BUTTON_EMOJI_IDS.get('✅');
+      else if (lowerText.includes('rad et') || lowerText.includes('bekor')) emojiId = BUTTON_EMOJI_IDS.get('❌');
+      else if (lowerText.includes('o‘chirish')) emojiId = BUTTON_EMOJI_IDS.get('🗑');
+      else if (lowerText.includes('yangilash')) emojiId = BUTTON_EMOJI_IDS.get('🔄');
+      else if (lowerText.includes('oldingi') || lowerText.includes('orqaga') || lowerText.includes('panel')) {
+        emojiId = BUTTON_EMOJI_IDS.get('⬅️');
+      } else if (lowerText.includes('keyingi')) emojiId = BUTTON_EMOJI_IDS.get('➡️');
+      else if (lowerText.includes('qidirish')) emojiId = BUTTON_EMOJI_IDS.get('👤');
+      else if (lowerText.includes('havola')) emojiId = BUTTON_EMOJI_IDS.get('🔗');
+      else if (lowerText.includes('buyruq') || lowerText.startsWith('/')) emojiId = BUTTON_EMOJI_IDS.get('🤖');
+      else if (lowerText.includes('qalqib') || lowerText.includes('popup')) emojiId = BUTTON_EMOJI_IDS.get('💬');
+      else if (lowerText.includes('ko‘k')) emojiId = BUTTON_EMOJI_IDS.get('🔵');
+      else if (lowerText.includes('yashil')) emojiId = BUTTON_EMOJI_IDS.get('🟢');
+      else if (lowerText.includes('qizil')) emojiId = BUTTON_EMOJI_IDS.get('🔴');
+      else if (lowerText.includes('obuna') || lowerText.includes('kanal')) emojiId = BUTTON_EMOJI_IDS.get('📣');
+      else if (lowerText.includes('foydalanuvchi') || lowerText.includes('adminlar')) emojiId = BUTTON_EMOJI_IDS.get('👥');
+      else if (lowerText.includes('nft')) emojiId = BUTTON_EMOJI_IDS.get('💎');
+      else if (lowerText.includes('xabar')) emojiId = BUTTON_EMOJI_IDS.get('📢');
+    }
     return emojiId ? { ...button, icon_custom_emoji_id: emojiId } : button;
   }
   return {
@@ -983,16 +1075,20 @@ function compactButtonLabel(value) {
 
 function callbackButton(text, data, style = 'primary') {
   const isPremium = /premium/i.test(text);
+  const emoji = text.match(BOT_EMOJI_PATTERN);
+  const emojiId = emoji ? buttonEmojiId(emoji[0]) : null;
   const label = stripBotEmojis(text).replace(/^(?:⭐️?\s*)+/u, '');
-  const button = addPremiumButtonIcon(Markup.button.callback(label, data), isPremium);
+  const button = addPremiumButtonIcon(Markup.button.callback(label, data), isPremium, emojiId);
   button.text = compactButtonLabel(button.text);
   return { ...button, style };
 }
 
 function urlButton(text, url) {
   const isPremium = /premium/i.test(text);
+  const emoji = text.match(BOT_EMOJI_PATTERN);
+  const emojiId = emoji ? buttonEmojiId(emoji[0]) : null;
   const label = stripBotEmojis(text).replace(/^(?:⭐️?\s*)+/u, '');
-  const button = addPremiumButtonIcon(Markup.button.url(label, url), isPremium);
+  const button = addPremiumButtonIcon(Markup.button.url(label, url), isPremium, emojiId);
   button.text = compactButtonLabel(button.text);
   return { ...button, style: 'primary' };
 }
@@ -1014,7 +1110,7 @@ async function showSubscriptionPrompt(ctx) {
     'Referral hisoblanishi va Mini App’dan foydalanish uchun quyidagi kanal(lar)ga obuna bo‘ling, so‘ng tekshiring.',
     'Referral hisoblanishi',
     MESSAGE_EMOJI_IDS.subscription,
-    '🅰️',
+    '📣',
   );
   await replyText(ctx, text, { ...subscriptionKeyboard(await getRequiredChannels()), parse_mode: 'HTML' });
 }
@@ -1023,7 +1119,11 @@ function mainMenuKeyboard() {
   const rows = [];
   if (WEB_APP_URL) {
     const label = stripBotEmojis('🎁 Mini App');
-    const button = addPremiumButtonIcon(Markup.button.webApp(label, WEB_APP_URL), false);
+    const button = addPremiumButtonIcon(
+      Markup.button.webApp(label, WEB_APP_URL),
+      false,
+      BUTTON_EMOJI_IDS.get('🎁'),
+    );
     button.text = compactButtonLabel(button.text);
     rows.push([{
       ...button,
@@ -1044,7 +1144,7 @@ async function showWelcome(ctx) {
     : 'Salom! Referral ball to‘plang va NFT yoki Telegram Premium yutib oling. WEB_APP_URL sozlanmagan, lekin botdagi funksiyalardan foydalanishingiz mumkin:';
   await replyText(
     ctx,
-    addMessageEmoji(message, 'Salom!', MESSAGE_EMOJI_IDS.greeting, '👋'),
+    addMessageEmoji(message, 'Salom!', MESSAGE_EMOJI_IDS.greeting, '🙂'),
     { ...mainMenuKeyboard(), parse_mode: 'HTML' },
   );
 }
@@ -1187,7 +1287,7 @@ async function showBalance(ctx) {
     ? `\n\nKutilayotgan so‘rov: ${escapeHtml(stats.giftRequest.prizeDisplayName)}`
     : '';
   let message = `Referral balansingiz\n\nTelegram ID: <code>${escapeHtml(String(ctx.from.id))}</code>\nTasdiqlangan takliflar: ${stats.referralCount}\nSarflashingiz mumkin: ${stats.referralBalance} ball${pending}`;
-  message = addMessageEmoji(message, 'Referral balansingiz', MESSAGE_EMOJI_IDS.referralSummary, '📊');
+  message = addMessageEmoji(message, 'Referral balansingiz', MESSAGE_EMOJI_IDS.referralSummary, '⭐️');
   message = addMessageEmoji(message, 'Tasdiqlangan takliflar:', MESSAGE_EMOJI_IDS.confirmed, '✅');
   message = addMessageEmoji(message, 'Sarflashingiz mumkin:', MESSAGE_EMOJI_IDS.spend, '🛒');
   await replyText(ctx,
@@ -1772,8 +1872,8 @@ function ownerPanelKeyboard(includeAdminManagement = false, permissions = ALL_AD
 
 async function showOwnerPanel(ctx, edit = false) {
   const keyboard = ownerPanelKeyboard(isOwner(ctx), await getAdminPermissions(String(ctx.from.id)));
-  let text = addMessageEmoji('Bot boshqaruvi\n\nBo‘limni tanlang:', 'Bot boshqaruvi', MESSAGE_EMOJI_IDS.tools, '🛠');
-  text = addMessageEmoji(text, 'Bo‘limni tanlang:', MESSAGE_EMOJI_IDS.section, '🗂');
+  let text = addMessageEmoji('Bot boshqaruvi\n\nBo‘limni tanlang:', 'Bot boshqaruvi', MESSAGE_EMOJI_IDS.tools, '⚙️');
+  text = addMessageEmoji(text, 'Bo‘limni tanlang:', MESSAGE_EMOJI_IDS.section, 'ℹ️');
   if (edit && ctx.callbackQuery && ctx.callbackQuery.message && !ctx.callbackQuery.message.photo) {
     await editText(ctx, text, { ...keyboard, parse_mode: 'HTML' });
   } else {
@@ -1966,7 +2066,7 @@ async function handleBroadcastAdminInput(ctx, session) {
     if (/^\/skip(?:@\w+)?(?:\s|$)/i.test((message.text || '').trim())) {
       ownerSessions.set(adminId, { action: 'broadcast_text', sourceChatId: ctx.chat.id });
       await ctx.reply(
-        '<tg-emoji emoji-id="5393314064220843793">💬</tg-emoji> Xabar matnini yuboring. Premium emoji foydalanishingiz mumkin:',
+        `<tg-emoji emoji-id="${MESSAGE_EMOJI_IDS.broadcastText}">💬</tg-emoji> Xabar matnini yuboring. Premium emoji foydalanishingiz mumkin:`,
         { parse_mode: 'HTML' },
       );
       return true;
@@ -1974,7 +2074,7 @@ async function handleBroadcastAdminInput(ctx, session) {
     if (!message.photo && !message.video && !message.animation && !message.document
       && !message.audio && !message.voice) {
       await ctx.reply(
-        '<tg-emoji emoji-id="5350693961281314631">🖼</tg-emoji> Xabar uchun rasm, video yoki GIF yuboring. Media shart emas:',
+        `<tg-emoji emoji-id="${MESSAGE_EMOJI_IDS.broadcastMedia}">🖼</tg-emoji> Xabar uchun rasm, video yoki GIF yuboring. Media shart emas:`,
         { ...broadcastStartKeyboard(), parse_mode: 'HTML' },
       );
       return true;
@@ -1985,7 +2085,7 @@ async function handleBroadcastAdminInput(ctx, session) {
       mediaMessageId: message.message_id,
     });
     await ctx.reply(
-      '<tg-emoji emoji-id="5393314064220843793">💬</tg-emoji> Xabar matnini yuboring. Premium emoji foydalanishingiz mumkin:',
+      `<tg-emoji emoji-id="${MESSAGE_EMOJI_IDS.broadcastText}">💬</tg-emoji> Xabar matnini yuboring. Premium emoji foydalanishingiz mumkin:`,
       { parse_mode: 'HTML' },
     );
     return true;
@@ -2005,7 +2105,7 @@ async function handleBroadcastAdminInput(ctx, session) {
       buttons: [],
     });
     await ctx.reply(
-      '<tg-emoji emoji-id="5215327492738392838">🔩</tg-emoji> Inline tugma qo\'shasizmi?',
+      `<tg-emoji emoji-id="${MESSAGE_EMOJI_IDS.broadcastButtons}">📝</tg-emoji> Inline tugma qo‘shasizmi?`,
       { ...broadcastButtonChoiceKeyboard(0), parse_mode: 'HTML' },
     );
     return true;
@@ -2102,8 +2202,8 @@ async function renderChannels(ctx, edit = false) {
   rows.push([callbackButton('➕ Kanal qo‘shish', 'admin:channel_add', 'success')]);
   rows.push([callbackButton('⬅️ Panelga qaytish', 'admin:panel')]);
   const text = channels.length
-    ? `${customEmojiTag(MESSAGE_EMOJI_IDS.channelSection, '🔻')} Majburiy obuna kanallari (${channels.length}):\n${channels.map((channel) => `• ${escapeHtml(channel.title)} — ${escapeHtml(channel.channel_id)}`).join('\n')}`
-    : `${customEmojiTag(MESSAGE_EMOJI_IDS.channelSection, '🔻')} Majburiy obuna kanallari qo‘shilmagan.`;
+    ? `${customEmojiTag(MESSAGE_EMOJI_IDS.channelSection, '📣')} Majburiy obuna kanallari (${channels.length}):\n${channels.map((channel) => `• ${escapeHtml(channel.title)} — ${escapeHtml(channel.channel_id)}`).join('\n')}`
+    : `${customEmojiTag(MESSAGE_EMOJI_IDS.channelSection, '📣')} Majburiy obuna kanallari qo‘shilmagan.`;
   if (edit && ctx.callbackQuery && ctx.callbackQuery.message) {
     await editText(ctx, text, { ...twoColumnKeyboard(rows), parse_mode: 'HTML' });
   } else {
@@ -2145,7 +2245,7 @@ async function showPendingRewards(ctx, edit = false) {
   ]);
   const text = total
     ? `🎁 NFT giftni qo‘lda topshirib, “Topshirildi” tugmasini bosing. Kutilayotgan: ${total}${total > rewards.length ? ` (birinchi ${rewards.length} tasi)` : ''}.\n\n${rewards.map((reward, index) => `${index + 1}. ${reward.first_name || 'Foydalanuvchi'}${reward.username ? ` (@${reward.username})` : ''} — ID: ${reward.user_id}\n   Sovg‘a: ${reward.prize_display_name || 'NFT hali biriktirilmagan'}`).join('\n')}`
-    : `${customEmojiTag(MESSAGE_EMOJI_IDS.empty, '📭')} Hozircha topshirilishi kutilayotgan gift yo‘q.`;
+    : `${customEmojiTag(MESSAGE_EMOJI_IDS.empty, '📥')} Hozircha topshirilishi kutilayotgan gift yo‘q.`;
   const rows = rewards.map((reward) => [
     ...(reward.prize_telegram_url
       ? [urlButton(`💎 ${reward.prize_display_name}`, reward.prize_telegram_url)]
@@ -2600,7 +2700,7 @@ bot.use(async (ctx, next) => {
     const userLink = `<a href="tg://user?id=${adminId}">${escapeHtml(displayName)}</a>`;
     const username = ctx.from.username ? `\nUsername: @${escapeHtml(ctx.from.username)}` : '';
     await notifyAdmins(
-      `🆕 Yangi obunachi botni ishga tushirdi.\n\nFoydalanuvchi: ${userLink}${username}\nTelegram ID: ${adminId}`,
+      `${customEmojiTag(MESSAGE_EMOJI_IDS.user, '👤')} Yangi obunachi botni ishga tushirdi.\n\nFoydalanuvchi: ${userLink}${username}\nTelegram ID: ${adminId}`,
       undefined,
       { parse_mode: 'HTML' },
     );
@@ -2867,7 +2967,7 @@ bot.action(/^broadcast:(.+)$/, async (ctx) => {
     ownerSessions.set(adminId, { action: 'broadcast_text', sourceChatId: ctx.chat.id });
     await ctx.answerCbQuery();
     await ctx.reply(
-      '<tg-emoji emoji-id="5393314064220843793">💬</tg-emoji> Xabar matnini yuboring. Premium emoji foydalanishingiz mumkin:',
+      `<tg-emoji emoji-id="${MESSAGE_EMOJI_IDS.broadcastText}">💬</tg-emoji> Xabar matnini yuboring. Premium emoji foydalanishingiz mumkin:`,
       { parse_mode: 'HTML' },
     );
     return;
@@ -2924,7 +3024,7 @@ bot.action(/^broadcast:(.+)$/, async (ctx) => {
     ownerSessions.set(adminId, { ...session, action: 'broadcast_options', buttons });
     await ctx.answerCbQuery('Tugma qo‘shildi.');
     await ctx.reply(
-      '<tg-emoji emoji-id="5215327492738392838">🔩</tg-emoji> Inline tugma qo\'shasizmi?',
+      `<tg-emoji emoji-id="${MESSAGE_EMOJI_IDS.broadcastButtons}">📝</tg-emoji> Inline tugma qo‘shasizmi?`,
       { ...broadcastButtonChoiceKeyboard(buttons.length), parse_mode: 'HTML' },
     );
     return;
@@ -3119,7 +3219,7 @@ bot.action(/^admin:(.+)$/, async (ctx) => {
     ownerSessions.set(String(ctx.from.id), { action: 'user_search' });
     await replyText(
       ctx,
-      `${customEmojiTag(MESSAGE_EMOJI_IDS.search, '🔍')} Qidirmoqchi bo‘lgan foydalanuvchining raqamli Telegram ID’sini yuboring. Bekor qilish: /cancel`,
+      `${customEmojiTag(MESSAGE_EMOJI_IDS.search, '👤')} Qidirmoqchi bo‘lgan foydalanuvchining raqamli Telegram ID’sini yuboring. Bekor qilish: /cancel`,
       { parse_mode: 'HTML' },
     );
     return;
@@ -3197,7 +3297,7 @@ bot.action(/^admin:(.+)$/, async (ctx) => {
   } else if (action === 'broadcast') {
     ownerSessions.set(String(ctx.from.id), { action: 'broadcast_media' });
     await ctx.reply(
-      '<tg-emoji emoji-id="5350693961281314631">🖼</tg-emoji> Xabar uchun rasm, video yoki GIF yuboring. Media shart emas:',
+      `<tg-emoji emoji-id="${MESSAGE_EMOJI_IDS.broadcastMedia}">🖼</tg-emoji> Xabar uchun rasm, video yoki GIF yuboring. Media shart emas:`,
       { ...broadcastStartKeyboard(), parse_mode: 'HTML' },
     );
   } else if (action === 'admins') {
@@ -3250,17 +3350,17 @@ bot.action(/^admin:(.+)$/, async (ctx) => {
       collections.giftRequests.countDocuments({ status: 'pending' }),
     ]);
     const text = [
-      '📊 Referral statistikasi:',
-      `👤 Botni ishga tushirganlar: ${users}`,
+      `${customEmojiTag(MESSAGE_EMOJI_IDS.stats, '📊')} Referral statistikasi:`,
+      `${customEmojiTag(MESSAGE_EMOJI_IDS.user, '👤')} Botni ishga tushirganlar: ${users}`,
       `Tasdiqlangan takliflar: ${referrals}`,
-      `Yangi so‘rovlar: ${pendingRequests}`,
-      `Eski mukofot so‘rovlari: ${pending}`,
-      `Eski topshirilgan mukofotlar: ${delivered}`,
+      `${customEmojiTag(MESSAGE_EMOJI_IDS.requests, '📨')} Yangi so‘rovlar: ${pendingRequests}`,
+      `${customEmojiTag(MESSAGE_EMOJI_IDS.pending, '⏳')} Eski mukofot so‘rovlari: ${pending}`,
+      `${customEmojiTag(MESSAGE_EMOJI_IDS.reward, '🎁')} Eski topshirilgan mukofotlar: ${delivered}`,
     ].join('\n');
-    await ctx.editMessageText(text, twoColumnKeyboard([
+    await editText(ctx, text, { ...twoColumnKeyboard([
       [callbackButton('🔄 Yangilash', 'admin:stats')],
       [callbackButton('⬅️ Panelga qaytish', 'admin:panel')],
-    ]));
+    ]), parse_mode: 'HTML' });
   } else if (action === 'rewards') {
     await showPendingRewards(ctx, true);
   } else if (action === 'prizes') {
