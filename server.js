@@ -111,7 +111,26 @@ function escapeHtml(value) {
 }
 
 const PREMIUM_EMOJI_ID = '5393380387105827492';
+const MESSAGE_EMOJI_IDS = {
+  greeting: '5462910521739063094',
+  miniApp: '5328050550099427291',
+  balance: '5393163448307705594',
+  invite: '5453957997418004470',
+  referralSummary: '5231476153159546957',
+  confirmed: '5386836029472790744',
+  spend: '5226656353744862682',
+  link: '5393243708361567810',
+  reward: '5467403804855016559',
+};
 const BOT_EMOJI_PATTERN = /(?:\p{Extended_Pictographic}(?:\uFE0F|\uFE0E)?\p{Emoji_Modifier}?(?:\u200D\p{Extended_Pictographic}(?:\uFE0F|\uFE0E)?\p{Emoji_Modifier}?)*)|(?:\p{Regional_Indicator}{2})|(?:[#*0-9]\uFE0F?\u20E3)/gu;
+
+function customEmojiTag(emojiId, fallback) {
+  return `<tg-emoji emoji-id="${emojiId}">${fallback}</tg-emoji>`;
+}
+
+function addMessageEmoji(text, phrase, emojiId, fallback) {
+  return text.replace(phrase, `${customEmojiTag(emojiId, fallback)} ${phrase}`);
+}
 
 function stripBotEmojis(value, options = {}) {
   if (typeof value !== 'string') return value;
@@ -136,8 +155,12 @@ function stripBotEmojis(value, options = {}) {
 function telegramMessage(text, options = {}) {
   text = stripBotEmojis(text, options);
   const hasPremiumEmojiPrefix = options.entities
-    ? options.entities.some((entity) => entity.type === 'custom_emoji' && entity.offset === 0 && entity.length === 2)
-    : options.parse_mode === 'HTML' && /^<tg-emoji\b[^>]*>/.test(text);
+    ? options.entities.some((entity) => entity.type === 'custom_emoji'
+      && entity.custom_emoji_id === PREMIUM_EMOJI_ID
+      && entity.offset === 0
+      && entity.length === 2)
+    : options.parse_mode === 'HTML'
+      && new RegExp(`^<tg-emoji\\s+emoji-id=["']${PREMIUM_EMOJI_ID}["']>`).test(text);
   if (!/premium/i.test(text) || hasPremiumEmojiPrefix) return { text, options };
   const existingEntities = options.entities || [];
   if (options.parse_mode === 'HTML') {
@@ -453,7 +476,17 @@ function startReferralPayload(ctx) {
 }
 
 function addPremiumButtonIcon(button, isPremium) {
-  if (!isPremium) return button;
+  if (!isPremium) {
+    const lowerText = button.text.toLocaleLowerCase();
+    const emojiId = lowerText.includes('mini appni ochish')
+      ? MESSAGE_EMOJI_IDS.miniApp
+      : lowerText === 'balansim'
+        ? MESSAGE_EMOJI_IDS.balance
+        : lowerText.includes('do‘stni taklif qilish')
+          ? MESSAGE_EMOJI_IDS.invite
+          : null;
+    return emojiId ? { ...button, icon_custom_emoji_id: emojiId } : button;
+  }
   return {
     ...button,
     text: button.text.replace(/^(?:⭐️?\s*)+/u, ''),
@@ -501,19 +534,27 @@ async function showSubscriptionPrompt(ctx) {
 function mainMenuKeyboard() {
   const rows = [];
   if (WEB_APP_URL) {
-    rows.push([{ ...Markup.button.webApp(stripBotEmojis('🎁 Mini Appni ochish'), WEB_APP_URL), style: 'success' }]);
+    const label = stripBotEmojis('🎁 Mini Appni ochish');
+    rows.push([{
+      ...addPremiumButtonIcon(Markup.button.webApp(label, WEB_APP_URL), false),
+      style: 'success',
+    }]);
   }
-  rows.push([callbackButton('Balansim', 'menu:balance', 'success')]);
+  rows.push([callbackButton('💰 Balansim', 'menu:balance', 'success')]);
   rows.push([callbackButton('Sovg‘alar va Premium', 'menu:prizes')]);
-  rows.push([callbackButton('Do‘stni taklif qilish', 'menu:invite')]);
+  rows.push([callbackButton('👥 Do‘stni taklif qilish', 'menu:invite')]);
   return twoColumnKeyboard(rows);
 }
 
 async function showWelcome(ctx) {
   const message = WEB_APP_URL
-    ? '👋 Salom! Referral ball to‘plang va NFT yoki Telegram Premium yutib oling. Barcha imkoniyatlar bot ichida ham mavjud:'
-    : '👋 Salom! Referral ball to‘plang va NFT yoki Telegram Premium yutib oling. WEB_APP_URL sozlanmagan, lekin botdagi funksiyalardan foydalanishingiz mumkin:';
-  await replyText(ctx, message, mainMenuKeyboard());
+    ? 'Salom! Referral ball to‘plang va NFT yoki Telegram Premium yutib oling. Barcha imkoniyatlar bot ichida ham mavjud:'
+    : 'Salom! Referral ball to‘plang va NFT yoki Telegram Premium yutib oling. WEB_APP_URL sozlanmagan, lekin botdagi funksiyalardan foydalanishingiz mumkin:';
+  await replyText(
+    ctx,
+    addMessageEmoji(message, 'Salom!', MESSAGE_EMOJI_IDS.greeting, '👋'),
+    { ...mainMenuKeyboard(), parse_mode: 'HTML' },
+  );
 }
 
 async function getCampaignStats(userId) {
@@ -628,23 +669,30 @@ async function createGiftRequest(telegramUser, prizeId) {
 async function showBalance(ctx) {
   const stats = await getCampaignStats(String(ctx.from.id));
   const pending = stats.giftRequest
-    ? `\n\n⏳ Kutilayotgan so‘rov: ${stats.giftRequest.prizeDisplayName}`
+    ? `\n\nKutilayotgan so‘rov: ${escapeHtml(stats.giftRequest.prizeDisplayName)}`
     : '';
+  let message = `Referral balansingiz\n\nTasdiqlangan takliflar: ${stats.referralCount}\nSarflashingiz mumkin: ${stats.referralBalance} ball${pending}`;
+  message = addMessageEmoji(message, 'Referral balansingiz', MESSAGE_EMOJI_IDS.referralSummary, '📊');
+  message = addMessageEmoji(message, 'Tasdiqlangan takliflar:', MESSAGE_EMOJI_IDS.confirmed, '✅');
+  message = addMessageEmoji(message, 'Sarflashingiz mumkin:', MESSAGE_EMOJI_IDS.spend, '🛒');
   await replyText(ctx,
-    `💰 Referral balansingiz\n\n✅ Tasdiqlangan takliflar: ${stats.referralCount}\n🎟 Sarflashingiz mumkin: ${stats.referralBalance} ball${pending}`,
-    mainMenuKeyboard(),
+    message,
+    { ...mainMenuKeyboard(), parse_mode: 'HTML' },
   );
 }
 
 async function showInviteLink(ctx) {
   const stats = await getCampaignStats(String(ctx.from.id));
   const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(stats.botLink)}&text=${encodeURIComponent('Botga qo‘shiling va referral kampaniyasida qatnashing.')}`;
-  await ctx.reply(
-    `🔗 Do‘stlaringizga ushbu taklif havolasini yuboring:\n\n${stats.botLink}\n\nDo‘stingiz botni ishga tushirib, majburiy kanallarga obuna bo‘lgach 1 ball olasiz.`,
-    twoColumnKeyboard([
+  let message = `Do‘stlaringizga ushbu taklif havolasini yuboring:\n\n${stats.botLink}\n\nDo‘stingiz botni ishga tushirib, majburiy kanallarga obuna bo‘lgach 1 ball olasiz.`;
+  message = addMessageEmoji(message, 'Do‘stlaringizga ushbu taklif havolasini yuboring:', MESSAGE_EMOJI_IDS.link, '🔗');
+  message = addMessageEmoji(message, 'Do‘stingiz botni ishga tushirib, majburiy kanallarga obuna bo‘lgach 1 ball olasiz.', MESSAGE_EMOJI_IDS.reward, '🎁');
+  await replyText(ctx,
+    message,
+    { ...twoColumnKeyboard([
       [urlButton('📤 Do‘stga ulashish', shareUrl)],
       [callbackButton('⬅️ Bosh menyu', 'menu:home')],
-    ]),
+    ]), parse_mode: 'HTML' },
   );
 }
 
