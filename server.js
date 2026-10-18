@@ -19,6 +19,15 @@ const OWNER_ID = process.env.OWNER_ID || '';
 if (OWNER_ID && !/^\d+$/.test(OWNER_ID)) {
   throw new Error('OWNER_ID must be the numeric Telegram user ID of the bot owner.');
 }
+const ADMIN_PERMISSIONS = Object.freeze({
+  stats: 'Statistika',
+  broadcast: 'Xabar',
+  gifts: 'Sovg‘alar',
+  users: 'Foydalanuvchilar',
+  channels: 'Kanallar',
+  bonuses: 'Bonuslar',
+});
+const ALL_ADMIN_PERMISSIONS = Object.keys(ADMIN_PERMISSIONS);
 
 const PORT = Number(process.env.PORT || 3000);
 if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
@@ -89,6 +98,46 @@ async function isAdmin(ctx) {
   if (!ctx.from) return false;
   const userId = String(ctx.from.id);
   return userId === OWNER_ID || Boolean(await collections.admins.findOne({ _id: userId }));
+}
+
+async function getAdminPermissions(userId) {
+  if (userId === OWNER_ID) return ALL_ADMIN_PERMISSIONS;
+  const admin = await collections.admins.findOne({ _id: String(userId) });
+  if (!admin) return [];
+  if (!Array.isArray(admin.permissions)) return ALL_ADMIN_PERMISSIONS;
+  return admin.permissions.filter((permission) => ALL_ADMIN_PERMISSIONS.includes(permission));
+}
+
+function permissionForAdminAction(action) {
+  if (action === 'stats') return 'stats';
+  if (action === 'broadcast' || action.startsWith('broadcast:')) return 'broadcast';
+  if (['prizes', 'gift_requests', 'rewards', 'prize_add', 'premium_add'].includes(action)
+    || action.startsWith('gift_request_')
+    || action.startsWith('prize_delete:')
+    || action.startsWith('reward_done:')) return 'gifts';
+  if (action === 'user_search'
+    || action.startsWith('user_view:')
+    || action.startsWith('user_balance_')
+    || action.startsWith('user_block:')
+    || action.startsWith('user_unblock:')) return 'users';
+  if (action === 'channels'
+    || action === 'channel_add'
+    || action.startsWith('channel_edit:')
+    || action.startsWith('channel_delete:')) return 'channels';
+  if (action === 'bonus_admin'
+    || action === 'bonus_channel_set'
+    || action === 'promo_add'
+    || action.startsWith('promo_disable:')) return 'bonuses';
+  return null;
+}
+
+function permissionForAdminSession(action) {
+  if (action.startsWith('broadcast_')) return 'broadcast';
+  if (['prize_add', 'prize_price', 'premium_months', 'premium_price'].includes(action)) return 'gifts';
+  if (action === 'user_search' || action === 'user_balance_adjust') return 'users';
+  if (action === 'channel_add' || action === 'channel_edit') return 'channels';
+  if (['bonus_channel_set', 'promo_code', 'promo_points', 'promo_uses'].includes(action)) return 'bonuses';
+  return null;
 }
 
 async function getAdminIds() {
@@ -725,7 +774,7 @@ function addPremiumButtonIcon(button, isPremium) {
   if (!isPremium) {
     const lowerText = button.text.toLocaleLowerCase();
     let emojiId = null;
-    if (lowerText.includes('mini appni ochish')) emojiId = MESSAGE_EMOJI_IDS.miniApp;
+    if (lowerText.includes('mini app')) emojiId = MESSAGE_EMOJI_IDS.miniApp;
     else if (lowerText === 'balansim') emojiId = MESSAGE_EMOJI_IDS.balance;
     else if (lowerText.includes('do‘stni taklif qilish')) emojiId = MESSAGE_EMOJI_IDS.invite;
     else if (lowerText === 'sotib olish') emojiId = MESSAGE_EMOJI_IDS.spend;
@@ -1573,23 +1622,24 @@ async function handleHttpRequest(req, res) {
   res.end(req.method === 'HEAD' ? undefined : content);
 }
 
-function ownerPanelKeyboard(includeAdminManagement = false) {
-  const rows = [
-    [callbackButton('Referal statistikasi', 'admin:stats')],
-    [callbackButton('📣 Foydalanuvchilarga xabar yuborish', 'admin:broadcast', 'success')],
-    [callbackButton('💎 Sovg‘alar: NFT va Premium', 'admin:prizes')],
-    [callbackButton('Sovg‘a so‘rovlari', 'admin:gift_requests')],
-    [callbackButton('Kutilayotgan giftlar', 'admin:rewards')],
-    [callbackButton('Majburiy kanal obunalari', 'admin:channels')],
-    [callbackButton('Foydalanuvchini qidirish', 'admin:user_search')],
-    [callbackButton('Bonuslar va promokodlar', 'admin:bonus_admin')],
-  ];
+function ownerPanelKeyboard(includeAdminManagement = false, permissions = ALL_ADMIN_PERMISSIONS) {
+  const rows = [];
+  if (permissions.includes('stats')) rows.push([callbackButton('Referal statistikasi', 'admin:stats')]);
+  if (permissions.includes('broadcast')) rows.push([callbackButton('📣 Xabar yuborish', 'admin:broadcast', 'success')]);
+  if (permissions.includes('gifts')) {
+    rows.push([callbackButton('💎 Sovg‘alar: NFT va Premium', 'admin:prizes')]);
+    rows.push([callbackButton('Sovg‘a so‘rovlari', 'admin:gift_requests')]);
+    rows.push([callbackButton('Kutilayotgan giftlar', 'admin:rewards')]);
+  }
+  if (permissions.includes('channels')) rows.push([callbackButton('Majburiy kanal obunalari', 'admin:channels')]);
+  if (permissions.includes('users')) rows.push([callbackButton('Foydalanuvchini qidirish', 'admin:user_search')]);
+  if (permissions.includes('bonuses')) rows.push([callbackButton('Bonuslar va promokodlar', 'admin:bonus_admin')]);
   if (includeAdminManagement) rows.push([callbackButton('Adminlarni boshqarish', 'admin:admins')]);
   return twoColumnKeyboard(rows);
 }
 
 async function showOwnerPanel(ctx, edit = false) {
-  const keyboard = ownerPanelKeyboard(isOwner(ctx));
+  const keyboard = ownerPanelKeyboard(isOwner(ctx), await getAdminPermissions(String(ctx.from.id)));
   let text = addMessageEmoji('Bot boshqaruvi\n\nBo‘limni tanlang:', 'Bot boshqaruvi', MESSAGE_EMOJI_IDS.tools, '🛠');
   text = addMessageEmoji(text, 'Bo‘limni tanlang:', MESSAGE_EMOJI_IDS.section, '🗂');
   if (edit && ctx.callbackQuery && ctx.callbackQuery.message) {
@@ -1870,14 +1920,36 @@ async function handleBroadcastAdminInput(ctx, session) {
 
 async function renderAdmins(ctx, edit = false) {
   const admins = await collections.admins.find().sort({ _id: 1 }).toArray();
-  const rows = admins.map((admin) => [
-    callbackButton(`🗑 Admin ${admin._id} ni o‘chirish`, `admin:admin_remove:${admin._id}`, 'danger'),
+  const rows = admins.flatMap((admin) => [
+    [
+      callbackButton(`🔐 Huquqlar · ${admin._id}`, `admin:permissions:${admin._id}`),
+      callbackButton('🗑 O‘chirish', `admin:admin_remove:${admin._id}`, 'danger'),
+    ],
   ]);
   rows.push([callbackButton('➕ Admin qo‘shish', 'admin:admin_add', 'success')]);
   rows.push([callbackButton('⬅️ Panelga qaytish', 'admin:panel')]);
   const text = admins.length
     ? `👥 Qo‘shimcha adminlar (${admins.length}):\n${admins.map((admin) => `• ${admin._id}`).join('\n')}\n\nBot egasining huquqlari alohida va o‘zgarmaydi.`
     : '👥 Hozircha qo‘shimcha admin yo‘q. Bot egasi barcha admin huquqlarini saqlab qoladi.';
+  if (edit && ctx.callbackQuery && ctx.callbackQuery.message) {
+    await editText(ctx, text, twoColumnKeyboard(rows));
+  } else {
+    await replyText(ctx, text, twoColumnKeyboard(rows));
+  }
+}
+
+async function renderAdminPermissions(ctx, adminId, edit = false) {
+  const admin = await collections.admins.findOne({ _id: adminId });
+  if (!admin) {
+    await ctx.reply('Admin topilmadi.');
+    return;
+  }
+  const permissions = await getAdminPermissions(adminId);
+  const rows = Object.entries(ADMIN_PERMISSIONS).map(([key, label]) => [
+    callbackButton(`${permissions.includes(key) ? '✅' : '❌'} ${label}`, `admin:permission_toggle:${adminId}:${key}`),
+  ]);
+  rows.push([callbackButton('⬅️ Adminlar', 'admin:admins')]);
+  const text = `🔐 Admin ${adminId} huquqlari\n\nHar bir bo‘limni alohida yoqing yoki o‘chiring.`;
   if (edit && ctx.callbackQuery && ctx.callbackQuery.message) {
     await editText(ctx, text, twoColumnKeyboard(rows));
   } else {
@@ -2206,7 +2278,14 @@ async function handleAdminInput(ctx) {
     }
     await collections.admins.updateOne(
       { _id: newAdminId },
-      { $setOnInsert: { _id: newAdminId, added_at: new Date(), added_by: adminId } },
+      {
+        $setOnInsert: {
+          _id: newAdminId,
+          added_at: new Date(),
+          added_by: adminId,
+          permissions: [...ALL_ADMIN_PERMISSIONS],
+        },
+      },
       { upsert: true },
     );
     ownerSessions.delete(adminId);
@@ -2324,8 +2403,28 @@ bot.use(async (ctx, next) => {
   }
   const adminId = String(ctx.from.id);
   const admin = await isAdmin(ctx);
-  if (admin && ctx.message && ownerSessions.has(adminId)
-    && (ctx.message.text || ownerSessions.get(adminId).action.startsWith('broadcast_'))) {
+  const activeAdminSession = admin ? ownerSessions.get(adminId) : null;
+  if (activeAdminSession) {
+    const requiredPermission = permissionForAdminSession(activeAdminSession.action);
+    const ownerOnlySession = activeAdminSession.action === 'admin_add';
+    if ((ownerOnlySession && !isOwner(ctx))
+      || (requiredPermission && !isOwner(ctx)
+        && !(await getAdminPermissions(adminId)).includes(requiredPermission))) {
+      const isCancel = ctx.message
+        && /^\/cancel(?:@\w+)?(?:\s|$)/i.test((ctx.message.text || '').trim());
+      if (!isCancel) {
+        ownerSessions.delete(adminId);
+        if (ctx.callbackQuery) {
+          await ctx.answerCbQuery('⛔ Sizda bu amal uchun ruxsat yo‘q.', { show_alert: true });
+        } else {
+          await ctx.reply('⛔ Sizda bu amal uchun ruxsat yo‘q. Jarayon bekor qilindi.');
+        }
+        return;
+      }
+    }
+  }
+  if (admin && ctx.message && activeAdminSession
+    && (ctx.message.text || activeAdminSession.action.startsWith('broadcast_'))) {
     if (await handleAdminInput(ctx)) return;
   }
 
@@ -2790,9 +2889,50 @@ bot.action(/^admin:(.+)$/, async (ctx) => {
   const action = ctx.match[1];
   const ownerOnly = action === 'admins'
     || action === 'admin_add'
+    || action.startsWith('permissions:')
+    || action.startsWith('permission_toggle:')
     || action.startsWith('admin_remove:');
   if (ownerOnly && !isOwner(ctx)) {
     await ctx.answerCbQuery('⛔ Bu amal faqat bot egasi uchun.', { show_alert: true });
+    return;
+  }
+  const requiredPermission = permissionForAdminAction(action);
+  if (requiredPermission && !isOwner(ctx)
+    && !(await getAdminPermissions(String(ctx.from.id))).includes(requiredPermission)) {
+    await ctx.answerCbQuery('⛔ Sizda bu bo‘lim uchun ruxsat yo‘q.', { show_alert: true });
+    return;
+  }
+  if (action.startsWith('permissions:')) {
+    const adminId = action.slice('permissions:'.length);
+    if (!/^\d{1,20}$/.test(adminId)) {
+      await ctx.answerCbQuery('Admin ID noto‘g‘ri.', { show_alert: true });
+      return;
+    }
+    await ctx.answerCbQuery();
+    await renderAdminPermissions(ctx, adminId, true);
+    return;
+  }
+  if (action.startsWith('permission_toggle:')) {
+    const match = /^permission_toggle:(\d{1,20}):([a-z]+)$/.exec(action);
+    if (!match || !ALL_ADMIN_PERMISSIONS.includes(match[2])) {
+      await ctx.answerCbQuery('Huquq ma’lumoti noto‘g‘ri.', { show_alert: true });
+      return;
+    }
+    const [, adminId, permission] = match;
+    const current = await getAdminPermissions(adminId);
+    const updated = current.includes(permission)
+      ? current.filter((item) => item !== permission)
+      : [...current, permission];
+    const result = await collections.admins.updateOne(
+      { _id: adminId },
+      { $set: { permissions: updated } },
+    );
+    if (!result.matchedCount) {
+      await ctx.answerCbQuery('Admin topilmadi.', { show_alert: true });
+      return;
+    }
+    await ctx.answerCbQuery('Huquq yangilandi.');
+    await renderAdminPermissions(ctx, adminId, true);
     return;
   }
   if (action === 'user_search') {
