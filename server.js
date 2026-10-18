@@ -55,6 +55,7 @@ const ownerSessions = new Map();
 const supportSessions = new Map();
 const SUPPORT_BUTTON_EMOJI_ID = '5116275208906343429';
 const SUPPORT_PROMPT_EMOJI_ID = '4915853119839011973';
+const CHANNEL_BOOST_BONUS_POINTS = 3;
 let collections;
 let botUsername;
 
@@ -483,6 +484,13 @@ async function saveBonusChannel(ctx, rawText) {
     },
     { upsert: true },
   );
+}
+
+function bonusChannelBoostUrl(settings) {
+  if (settings.channel_id.startsWith('@')) {
+    return `https://t.me/boost/${settings.channel_id.slice(1)}`;
+  }
+  return settings.invite_url;
 }
 
 function promoPostText(promo) {
@@ -1269,6 +1277,10 @@ async function showBonusMenu(ctx) {
     rows.push([urlButton('Bonus kanaliga obuna bo‘lish', settings.invite_url)]);
     rows.push([callbackButton('Obunani tekshirish · +3 ball', 'bonus:channel')]);
   }
+  if (settings && !(profile && profile.bonus_boost_claimed_at)) {
+    rows.push([urlButton('Kanalga Premium boost berish', bonusChannelBoostUrl(settings))]);
+    rows.push([callbackButton('Boostni tekshirish · +3 ball', 'bonus:boost')]);
+  }
   const nextDailyAt = profile && profile.daily_bonus_at
     ? new Date(profile.daily_bonus_at.getTime() + 24 * 60 * 60 * 1000)
     : null;
@@ -1285,10 +1297,15 @@ async function showBonusMenu(ctx) {
     : profile && profile.bonus_channel_claimed_at
       ? 'Kanalga obuna bonusi: olindi (+3 ball).'
       : 'Bonus kanaliga obuna bo‘ling va obunani tekshirib 3 ball oling.';
+  const boostText = !settings
+    ? ''
+    : profile && profile.bonus_boost_claimed_at
+      ? 'Premium boost bonusi: olindi (+3 ball).'
+      : 'Kanalga Premium boost bering va tekshirib +3 ball oling. Bu bonus bir marta beriladi.';
   const dailyText = dailyAvailable
     ? 'Bugungi kunlik bonus: tayyor (+2 ball).'
     : `Keyingi kunlik bonus: ${nextDailyAt.toLocaleString('uz-UZ')}.`;
-  let text = `Bonuslar\n\n${channelText}\n${dailyText}\n\nKunlik bonus har 24 soatda bir marta olinadi.`;
+  let text = `Bonuslar\n\n${channelText}\n${boostText ? `${boostText}\n` : ''}${dailyText}\n\nKunlik bonus har 24 soatda bir marta olinadi.`;
   text = addMessageEmoji(text, 'Bonuslar', MESSAGE_EMOJI_IDS.reward, '🎁');
   await replyText(ctx, text, { ...twoColumnKeyboard(rows), parse_mode: 'HTML' });
 }
@@ -2826,6 +2843,52 @@ bot.action(/^bonus:(.+)$/, async (ctx) => {
     } catch (error) {
       console.error(`Could not verify bonus channel subscription for ${userId}:`, error);
       await ctx.answerCbQuery('Obunani tekshirib bo‘lmadi. Keyinroq qayta urinib ko‘ring.', { show_alert: true });
+    }
+    return;
+  }
+  if (action === 'boost') {
+    const settings = await getBonusSettings();
+    if (!settings) {
+      await ctx.answerCbQuery('Bonus kanali hali sozlanmagan.', { show_alert: true });
+      return;
+    }
+    const account = await collections.campaignUsers.findOne({ _id: userId });
+    if (account && account.bonus_boost_claimed_at) {
+      await ctx.answerCbQuery('Premium boost bonusi avval olingan.', { show_alert: true });
+      return;
+    }
+    try {
+      const userBoosts = await ctx.telegram.getUserChatBoosts(settings.channel_id, ctx.from.id);
+      const now = Math.floor(Date.now() / 1000);
+      const hasActiveBoost = userBoosts.some(({ boosts }) =>
+        boosts.some((boost) => boost.expiration_date > now));
+      if (!hasActiveBoost) {
+        await ctx.answerCbQuery(
+          'Sizning Premium boostingiz kanalda topilmadi. Avval boost bering, keyin qayta tekshiring.',
+          { show_alert: true },
+        );
+        return;
+      }
+      const result = await collections.campaignUsers.updateOne(
+        { _id: userId, bonus_boost_claimed_at: { $exists: false } },
+        {
+          $inc: { bonus_points: CHANNEL_BOOST_BONUS_POINTS },
+          $set: { bonus_boost_claimed_at: new Date() },
+        },
+      );
+      await ctx.answerCbQuery(
+        result.modifiedCount
+          ? `Premium boost tasdiqlandi: +${CHANNEL_BOOST_BONUS_POINTS} ball!`
+          : 'Premium boost bonusi avval olingan.',
+        { show_alert: true },
+      );
+      await showBonusMenu(ctx);
+    } catch (error) {
+      console.error(`Could not verify channel boost for ${userId}:`, error);
+      await ctx.answerCbQuery(
+        'Boostni tekshirib bo‘lmadi. Bot bonus kanalida administrator ekanini tekshirib, qayta urinib ko‘ring.',
+        { show_alert: true },
+      );
     }
     return;
   }
