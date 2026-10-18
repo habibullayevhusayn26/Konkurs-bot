@@ -2158,14 +2158,14 @@ bot.action(/^admin:(.+)$/, async (ctx) => {
   } else if (action === 'admins') {
     await renderAdmins(ctx, true);
   } else if (action === 'bonus_admin') {
-    await renderBonusAdmin(ctx, true);
+    await showBonusAdmin(ctx, true);
   } else if (action === 'bonus_channel_set') {
     ownerSessions.set(String(ctx.from.id), { action: 'bonus_channel_set' });
     await ctx.reply('Bonus kanalining @username yoki -100... ID’sini, kerak bo‘lsa taklif havolasi bilan yuboring. Bot kanal administratori bo‘lishi kerak. Bekor qilish: /cancel');
   } else if (action === 'promo_add') {
     if (!await getBonusSettings()) {
       await ctx.reply('Avval bonus kanalini ulang.');
-      await renderBonusAdmin(ctx);
+      await showBonusAdmin(ctx);
       return;
     }
     ownerSessions.set(String(ctx.from.id), { action: 'promo_code' });
@@ -2181,7 +2181,7 @@ bot.action(/^admin:(.+)$/, async (ctx) => {
       { $set: { active: false, disabled_at: new Date(), disabled_by: String(ctx.from.id) } },
     );
     await ctx.reply(result.modifiedCount ? 'Promokod o‘chirildi.' : 'Faol promokod topilmadi.');
-    await renderBonusAdmin(ctx);
+    await showBonusAdmin(ctx);
   } else if (action === 'admin_add') {
     ownerSessions.set(String(ctx.from.id), { action: 'admin_add' });
     await ctx.reply('Qo‘shiladigan adminning raqamli Telegram ID’sini yuboring. Bekor qilish: /cancel');
