@@ -1542,10 +1542,12 @@ bot.start(async (ctx) => {
 });
 
 bot.on('pre_checkout_query', validatePremiumPreCheckout);
-bot.on('message', async (ctx) => {
+bot.on('message', async (ctx, next) => {
   if (ctx.message && ctx.message.successful_payment) {
     await handlePremiumPayment(ctx);
+    return;
   }
+  await next();
 });
 
 bot.command('help', async (ctx) => {

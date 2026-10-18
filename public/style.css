@@ -1158,6 +1158,50 @@ body * {
   color: #fff !important;
 }
 
+.brand-mark,
+.brand-name span,
+.status-dot,
+.eyebrow-line,
+h1 span,
+.section-heading h2 span,
+.invite-card h2 span,
+.hero-link,
+.balance-icon,
+.balance-value,
+.section-stamp svg,
+.toggle-icon,
+.gift-availability-ready,
+.selected-gift-cost,
+.invite-icon,
+.link-symbol,
+.copy-button,
+.share-button,
+.footer-dot,
+.footer-privacy svg,
+.gift-dialog-cost,
+.privacy-note svg {
+  color: #ffd43b !important;
+}
+
+.hero-link,
+.copy-button,
+.share-button,
+.gift-card:hover,
+.gift-card:focus-visible,
+.shop-toggle,
+.request-button {
+  border-color: #ffd43b !important;
+}
+
+.request-button {
+  background: #ffd43b !important;
+  color: #000 !important;
+}
+
+.request-button:hover:not(:disabled) {
+  background: #ffe477 !important;
+}
+
 .gift-dialog::backdrop {
   background: rgba(0, 0, 0, 0.85);
 }
