@@ -749,22 +749,74 @@ function addPremiumButtonIcon(button, isPremium) {
   };
 }
 
+function compactButtonLabel(value) {
+  const label = String(value).trim();
+  const lower = label.toLocaleLowerCase();
+  const shortLabels = [
+    [/^bonus kanaliga obuna bo‘lish$/, 'Kanalga obuna'],
+    [/^obunani tekshirish(?:\s*[·|].*)?$/, 'Tekshirish'],
+    [/^kunlik bonusni olish.*$/, 'Kunlik bonus +2'],
+    [/^kunlik bonus\s*[·|].*$/, 'Kunlik bonus'],
+    [/^sovg‘alar va premium$/, 'Sovg‘alar'],
+    [/^do‘stni taklif qilish$/, 'Taklif qilish'],
+    [/^sotib olish$/, 'Xarid'],
+    [/^foydalanuvchilarga xabar yuborish$/, 'Xabar yuborish'],
+    [/^referal statistikasi$/, 'Statistika'],
+    [/^majburiy kanal obunalari$/, 'Kanallar'],
+    [/^foydalanuvchini qidirish$/, 'User qidirish'],
+    [/^kutilayotgan giftlar$/, 'Kutilgan gift'],
+    [/^adminlarni boshqarish$/, 'Adminlar'],
+    [/^bonuslar va promokodlar$/, 'Bonuslar'],
+    [/^bonus kanalini o‘zgartirish$/, 'Kanalni tahrir'],
+    [/^bonus kanalini ulash$/, 'Kanalni ulash'],
+    [/^yangi promokod yaratish$/, 'Promo yaratish'],
+    [/^promokodni ishlatish$/, 'Promo olish'],
+    [/^premium sovg‘a qo‘shish$/, 'Premium qo‘shish'],
+    [/^sovg‘alar: nft va premium$/, 'Sovg‘alar'],
+    [/^sovg‘a so‘rovlari$/, 'So‘rovlar'],
+    [/^majburiy kanal obunalari$/, 'Kanallar'],
+    [/^tugmalarni yakunlash$/, 'Tayyor'],
+    [/^yo‘q, tugmalar tayyor$/, 'Yo‘q, tayyor'],
+    [/^yo‘q, tugmasiz davom etish$/, 'Yo‘q'],
+    [/^ha, yana tugma qo‘shaman$/, 'Ha, yana'],
+    [/^ha, inline tugma qo‘shaman$/, 'Ha, qo‘shish'],
+    [/^qalqib chiquvchi oyna$/, 'Popup'],
+    [/^bot buyrug‘i$/, 'Buyruq'],
+    [/^mediasiz davom etish$/, 'Mediasiz'],
+    [/^tasdiqlab yuborish$/, 'Yuborish'],
+    [/^panelga qaytish$/, 'Panel'],
+    [/^panelga borish$/, 'Panel'],
+    [/^bosh menyu$/, 'Menyu'],
+    [/^admin panel$/, 'Panel'],
+    [/^bonus kanalini ochish$/, 'Kanalni ochish'],
+  ];
+  for (const [pattern, replacement] of shortLabels) {
+    if (pattern.test(lower)) return replacement;
+  }
+  const premiumPurchase = /^(\d+)\s*oylik premium(?:\s*[·|].*)?$/i.exec(label);
+  if (premiumPurchase) return `${premiumPurchase[1]} oy Premium`;
+  const adminRemoval = /^admin\s+(\d+)\s+ni o‘chirish$/i.exec(label);
+  if (adminRemoval) return `O‘chirish ${adminRemoval[1]}`;
+  const prizeRemoval = /^🗑\s*(.+?)\s*·\s*(\d+)\s*ball$/u.exec(label);
+  if (prizeRemoval) return `O‘chirish · ${prizeRemoval[2]}`;
+  if (Array.from(label).length <= 16) return label;
+  return `${Array.from(label).slice(0, 15).join('').trimEnd()}…`;
+}
+
 function callbackButton(text, data, style = 'primary') {
   const isPremium = /premium/i.test(text);
   const label = stripBotEmojis(text).replace(/^(?:⭐️?\s*)+/u, '');
-  return {
-    ...addPremiumButtonIcon(Markup.button.callback(label, data), isPremium),
-    style,
-  };
+  const button = addPremiumButtonIcon(Markup.button.callback(label, data), isPremium);
+  button.text = compactButtonLabel(button.text);
+  return { ...button, style };
 }
 
 function urlButton(text, url) {
   const isPremium = /premium/i.test(text);
   const label = stripBotEmojis(text).replace(/^(?:⭐️?\s*)+/u, '');
-  return {
-    ...addPremiumButtonIcon(Markup.button.url(label, url), isPremium),
-    style: 'primary',
-  };
+  const button = addPremiumButtonIcon(Markup.button.url(label, url), isPremium);
+  button.text = compactButtonLabel(button.text);
+  return { ...button, style: 'primary' };
 }
 
 function twoColumnKeyboard(rows) {
@@ -793,8 +845,10 @@ function mainMenuKeyboard() {
   const rows = [];
   if (WEB_APP_URL) {
     const label = stripBotEmojis('🎁 Mini Appni ochish');
+    const button = addPremiumButtonIcon(Markup.button.webApp(label, WEB_APP_URL), false);
+    button.text = compactButtonLabel(button.text);
     rows.push([{
-      ...addPremiumButtonIcon(Markup.button.webApp(label, WEB_APP_URL), false),
+      ...button,
       style: 'success',
     }]);
   }
@@ -1599,7 +1653,7 @@ function makeBroadcastButton(text, entities = []) {
     throw new Error('Tugma nomi 1–64 ta belgidan iborat bo‘lsin.');
   }
   return {
-    text: label,
+    text: compactButtonLabel(label),
     ...(customEmoji ? { icon_custom_emoji_id: customEmoji.custom_emoji_id } : {}),
   };
 }
