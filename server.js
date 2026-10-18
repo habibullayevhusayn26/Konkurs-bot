@@ -1186,7 +1186,7 @@ async function showBalance(ctx) {
   const pending = stats.giftRequest
     ? `\n\nKutilayotgan so‘rov: ${escapeHtml(stats.giftRequest.prizeDisplayName)}`
     : '';
-  let message = `Referral balansingiz\n\nTasdiqlangan takliflar: ${stats.referralCount}\nSarflashingiz mumkin: ${stats.referralBalance} ball${pending}`;
+  let message = `Referral balansingiz\n\nTelegram ID: <code>${escapeHtml(String(ctx.from.id))}</code>\nTasdiqlangan takliflar: ${stats.referralCount}\nSarflashingiz mumkin: ${stats.referralBalance} ball${pending}`;
   message = addMessageEmoji(message, 'Referral balansingiz', MESSAGE_EMOJI_IDS.referralSummary, '📊');
   message = addMessageEmoji(message, 'Tasdiqlangan takliflar:', MESSAGE_EMOJI_IDS.confirmed, '✅');
   message = addMessageEmoji(message, 'Sarflashingiz mumkin:', MESSAGE_EMOJI_IDS.spend, '🛒');
