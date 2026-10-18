@@ -844,7 +844,7 @@ async function showSubscriptionPrompt(ctx) {
 function mainMenuKeyboard() {
   const rows = [];
   if (WEB_APP_URL) {
-    const label = stripBotEmojis('🎁 Mini Appni ochish');
+    const label = stripBotEmojis('🎁 Mini Appn');
     const button = addPremiumButtonIcon(Markup.button.webApp(label, WEB_APP_URL), false);
     button.text = compactButtonLabel(button.text);
     rows.push([{
@@ -911,6 +911,20 @@ function prizeCallbackCode(prizeId) {
 
 function prizeTypeLabel(prize) {
   return prize.type === 'premium' ? `${prize.premium_months} oylik Premium` : `NFT ${prize.display_name}`;
+}
+
+function prizeButtonLabel(prize) {
+  if (prize.type === 'premium') return `${prize.premium_months} oy Premium`;
+  const model = String(prize.model || prize.display_name || 'NFT')
+    .replace(/\s+#?\d[\d,]*$/u, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const number = prize.number || (/#([\d,]+)\s*$/u.exec(prize.display_name || '') || [])[1];
+  if (!number) return compactButtonLabel(model || 'NFT');
+  const suffix = `#${String(number).replace(/,/g, '')}`;
+  const prefixLength = Math.max(1, 16 - Array.from(suffix).length - 1);
+  const prefix = Array.from(model).slice(0, prefixLength).join('').trimEnd();
+  return `${prefix} ${suffix}`.trim();
 }
 
 async function createGiftRequest(telegramUser, prizeId) {
@@ -1085,7 +1099,7 @@ async function showPrizeMenu(ctx) {
   const prizes = await getCampaignPrizes();
   const rows = prizes.map((prize) => [
     callbackButton(
-      `${prize.type === 'premium' ? '⭐' : '💎'} ${prize.display_name} · ${prize.referrals_cost} ball`,
+      prizeButtonLabel(prize),
       `menu:request:${prizeCallbackCode(prize._id)}`,
       'success',
     ),
