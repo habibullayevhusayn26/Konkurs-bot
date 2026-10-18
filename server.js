@@ -58,6 +58,7 @@ async function initializeDatabase() {
     rewards: database.collection('referral_rewards'),
     prizes: database.collection('campaign_prizes'),
     giftRequests: database.collection('gift_requests'),
+    purchases: database.collection('purchase_orders'),
     previousRecipients: database.collection('bot_recipients'),
   };
   await collections.referrals.createIndex({ inviter_id: 1 });
@@ -67,6 +68,11 @@ async function initializeDatabase() {
     { unique: true, partialFilterExpression: { status: 'pending' } },
   );
   await collections.giftRequests.createIndex({ status: 1, created_at: 1 });
+  await collections.purchases.createIndex({ user_id: 1, created_at: -1 });
+  await collections.purchases.createIndex(
+    { telegram_payment_charge_id: 1 },
+    { unique: true, partialFilterExpression: { telegram_payment_charge_id: { $type: 'string' } } },
+  );
 }
 
 function isOwner(ctx) {
@@ -111,6 +117,11 @@ function escapeHtml(value) {
 }
 
 const PREMIUM_EMOJI_ID = '5393380387105827492';
+const PREMIUM_PURCHASES = new Map([
+  [3, 1000],
+  [6, 1500],
+  [12, 2500],
+]);
 const MESSAGE_EMOJI_IDS = {
   greeting: '5462910521739063094',
   miniApp: '5328050550099427291',
@@ -484,7 +495,9 @@ function addPremiumButtonIcon(button, isPremium) {
         ? MESSAGE_EMOJI_IDS.balance
         : lowerText.includes('do‘stni taklif qilish')
           ? MESSAGE_EMOJI_IDS.invite
-          : null;
+          : lowerText === 'sotib olish'
+            ? MESSAGE_EMOJI_IDS.spend
+            : null;
     return emojiId ? { ...button, icon_custom_emoji_id: emojiId } : button;
   }
   return {
@@ -543,6 +556,7 @@ function mainMenuKeyboard() {
   rows.push([callbackButton('💰 Balansim', 'menu:balance', 'success')]);
   rows.push([callbackButton('Sovg‘alar va Premium', 'menu:prizes')]);
   rows.push([callbackButton('👥 Do‘stni taklif qilish', 'menu:invite')]);
+  rows.push([callbackButton('Sotib olish', 'purchase:home')]);
   return twoColumnKeyboard(rows);
 }
 
@@ -710,6 +724,209 @@ async function showPrizeMenu(ctx) {
     ? '🎁 Yutish mumkin bo‘lgan sovg‘alar:\n\nHar bir sovg‘ani tanlab so‘rov yuboring. Admin tasdiqlagach NFT yoki Premium obunasini qo‘lda topshiradi.'
     : 'Hozircha sovg‘alar qo‘shilmagan. Keyinroq qayta tekshiring.';
   await replyText(ctx, text, twoColumnKeyboard(rows));
+}
+
+async function showPurchaseMenu(ctx, edit = false) {
+  const rows = [...PREMIUM_PURCHASES.entries()].map(([months, starCount]) => [
+    callbackButton(`Telegram Premium · ${months} oy · ${starCount} Stars`, `purchase:premium:${months}`, 'success'),
+  ]);
+  rows.push([callbackButton('Bosh menyu', 'menu:home')]);
+  const keyboard = twoColumnKeyboard(rows);
+  const text = 'Sotib olish\n\nTelegram Premium obunasini Stars orqali xarid qiling. To‘lov tasdiqlangach obuna avtomatik sovg‘a qilinadi.\n\n1 va 2 oylik obuna hamda foydalanuvchi hisobiga Stars yuborish Telegram Bot API’da mavjud emas.';
+  if (edit && ctx.callbackQuery && ctx.callbackQuery.message) {
+    await editText(ctx, text, keyboard);
+  } else {
+    await replyText(ctx, text, keyboard);
+  }
+}
+
+async function createPremiumInvoice(ctx, months) {
+  const starCount = PREMIUM_PURCHASES.get(months);
+  if (!starCount) {
+    await ctx.answerCbQuery('Premium muddati mavjud emas.', { show_alert: true });
+    return;
+  }
+  await ctx.answerCbQuery();
+  const userId = String(ctx.from.id);
+  const orderId = crypto.randomUUID();
+  const payload = `premium:${orderId}`;
+  const createdAt = new Date();
+  await collections.purchases.insertOne({
+    _id: orderId,
+    user_id: userId,
+    product: 'telegram_premium',
+    premium_months: months,
+    currency: 'XTR',
+    star_count: starCount,
+    status: 'invoice_sent',
+    created_at: createdAt,
+    expires_at: new Date(createdAt.getTime() + 15 * 60 * 1000),
+  });
+  try {
+    await ctx.telegram.sendInvoice(ctx.chat.id, {
+      title: `Telegram Premium · ${months} oy`,
+      description: `${months} oylik Telegram Premium obunasi. To‘lovdan so‘ng bot obunani avtomatik sovg‘a qiladi.`,
+      payload,
+      provider_token: '',
+      currency: 'XTR',
+      prices: [{ label: `Premium ${months} oy`, amount: starCount }],
+    });
+  } catch (error) {
+    await collections.purchases.updateOne(
+      { _id: orderId, status: 'invoice_sent' },
+      { $set: { status: 'invoice_failed', failed_at: new Date(), failure: error.message } },
+    );
+    throw error;
+  }
+}
+
+async function validatePremiumPreCheckout(ctx) {
+  const query = ctx.preCheckoutQuery;
+  const match = /^premium:([0-9a-f-]{36})$/i.exec(query.invoice_payload || '');
+  if (!match) {
+    await ctx.answerPreCheckoutQuery(false, 'Xarid ma’lumoti yaroqsiz.');
+    return;
+  }
+  const order = await collections.purchases.findOne({
+    _id: match[1],
+    user_id: String(query.from.id),
+    status: 'invoice_sent',
+  });
+  if (!order || !order.expires_at || order.expires_at <= new Date()) {
+    await ctx.answerPreCheckoutQuery(false, 'To‘lov muddati tugagan. Xaridni qaytadan boshlang.');
+    return;
+  }
+  if (query.currency !== order.currency || query.total_amount !== order.star_count) {
+    await ctx.answerPreCheckoutQuery(false, 'To‘lov summasi mos kelmadi.');
+    return;
+  }
+  if (await isUserBlocked(order.user_id)) {
+    await ctx.answerPreCheckoutQuery(false, 'Botdan foydalanishingiz cheklangan.');
+    return;
+  }
+  try {
+    if (!await isSubscribedToRequiredChannels(query.from.id)) {
+      await ctx.answerPreCheckoutQuery(false, 'Xarid qilishdan oldin majburiy kanallarga obuna bo‘ling.');
+      return;
+    }
+  } catch (error) {
+    console.error(`Could not verify purchase subscription for ${order.user_id}:`, error);
+    await ctx.answerPreCheckoutQuery(false, 'Obunani tekshirib bo‘lmadi. Keyinroq qayta urinib ko‘ring.');
+    return;
+  }
+  await ctx.answerPreCheckoutQuery(true);
+}
+
+async function refundPremiumPayment(ctx, payment, orderId, reason) {
+  try {
+    await ctx.telegram.callApi('refundStarPayment', {
+      user_id: ctx.from.id,
+      telegram_payment_charge_id: payment.telegram_payment_charge_id,
+    });
+  } catch (error) {
+    console.error(`Could not refund Premium payment ${payment.telegram_payment_charge_id}:`, error);
+    if (orderId) {
+      await collections.purchases.updateOne(
+        { _id: orderId, status: { $in: ['invoice_sent', 'fulfilling'] } },
+        {
+          $set: {
+            status: 'refund_failed',
+            refund_failed_at: new Date(),
+            refund_failure: error.message,
+            failure: reason,
+          },
+        },
+      );
+    }
+    const notified = await notifyAdmins(`Premium to‘lovi ${payment.telegram_payment_charge_id} avtomatik qaytarilmadi. Xarid ID: ${orderId || 'noma’lum'}.`);
+    if (!notified) console.error(`No admin could be notified about failed refund ${payment.telegram_payment_charge_id}.`);
+    await sendText(ctx.telegram, ctx.chat.id, 'To‘lovni avtomatik qaytarib bo‘lmadi. Yordam uchun bot adminiga murojaat qiling.');
+    return false;
+  }
+  if (orderId) {
+    await collections.purchases.updateOne(
+      { _id: orderId, status: { $in: ['invoice_sent', 'fulfilling'] } },
+      {
+        $set: {
+          status: 'refunded',
+          refunded_at: new Date(),
+          refunded_charge_id: payment.telegram_payment_charge_id,
+          failure: reason,
+        },
+      },
+    );
+  }
+  await sendText(ctx.telegram, ctx.chat.id, 'Premium xaridini yakunlab bo‘lmadi. To‘lovingiz avtomatik qaytarildi.');
+  return true;
+}
+
+async function handlePremiumPayment(ctx) {
+  const payment = ctx.message.successful_payment;
+  const match = /^premium:([0-9a-f-]{36})$/i.exec(payment.invoice_payload || '');
+  if (!match) {
+    console.error(`Received successful payment with an unknown payload from ${ctx.from.id}.`);
+    await refundPremiumPayment(ctx, payment, null, 'Unknown invoice payload.');
+    return;
+  }
+  const orderId = match[1];
+  const order = await collections.purchases.findOne({
+    _id: orderId,
+    user_id: String(ctx.from.id),
+  });
+  if (!order
+    || order.product !== 'telegram_premium'
+    || order.currency !== payment.currency
+    || order.star_count !== payment.total_amount
+    || !PREMIUM_PURCHASES.has(order.premium_months)
+    || payment.currency !== 'XTR') {
+    console.error(`Successful payment ${payment.telegram_payment_charge_id} does not match its purchase order.`);
+    await refundPremiumPayment(ctx, payment, order ? orderId : null, 'Payment does not match its purchase order.');
+    return;
+  }
+  const claim = await collections.purchases.findOneAndUpdate(
+    { _id: orderId, status: 'invoice_sent' },
+    {
+      $set: {
+        status: 'fulfilling',
+        telegram_payment_charge_id: payment.telegram_payment_charge_id,
+        provider_payment_charge_id: payment.provider_payment_charge_id,
+        paid_at: new Date(),
+      },
+    },
+    { returnDocument: 'after', includeResultMetadata: false },
+  );
+  if (!claim) {
+    const existingOrder = await collections.purchases.findOne({ _id: orderId });
+    if (existingOrder && existingOrder.telegram_payment_charge_id === payment.telegram_payment_charge_id) return;
+    await refundPremiumPayment(ctx, payment, orderId, 'Purchase order was already processed.');
+    return;
+  }
+
+  try {
+    await ctx.telegram.callApi('giftPremiumSubscription', {
+      user_id: ctx.from.id,
+      month_count: claim.premium_months,
+      star_count: claim.star_count,
+      text: 'Telegram Premium xaridi',
+    });
+  } catch (error) {
+    console.error(`Could not fulfill Premium purchase ${orderId}:`, error);
+    await refundPremiumPayment(ctx, payment, orderId, error.message);
+    return;
+  }
+  await collections.purchases.updateOne(
+    { _id: orderId, status: 'fulfilling' },
+    { $set: { status: 'delivered', delivered_at: new Date() } },
+  );
+  try {
+    await sendText(
+      ctx.telegram,
+      ctx.chat.id,
+      `Telegram Premium ${claim.premium_months} oylik obunasi muvaffaqiyatli sovg‘a qilindi.`,
+    );
+  } catch (error) {
+    console.error(`Could not confirm Premium purchase ${orderId} to user ${ctx.from.id}:`, error);
+  }
 }
 
 function formatUserDate(value) {
@@ -1244,7 +1461,15 @@ bot.use(async (ctx, next) => {
   };
   const answerCbQuery = ctx.answerCbQuery.bind(ctx);
   ctx.answerCbQuery = (text, extra) => answerCbQuery(stripBotEmojis(text), extra);
+  if (ctx.preCheckoutQuery) {
+    await next();
+    return;
+  }
   if (!ctx.chat || ctx.chat.type !== 'private' || !ctx.from) return;
+  if (ctx.message && ctx.message.successful_payment) {
+    await next();
+    return;
+  }
   const adminId = String(ctx.from.id);
   const admin = await isAdmin(ctx);
   if (admin && ctx.message && ctx.message.text && ownerSessions.has(adminId)) {
@@ -1316,6 +1541,13 @@ bot.start(async (ctx) => {
   await showWelcome(ctx);
 });
 
+bot.on('pre_checkout_query', validatePremiumPreCheckout);
+bot.on('message', async (ctx) => {
+  if (ctx.message && ctx.message.successful_payment) {
+    await handlePremiumPayment(ctx);
+  }
+});
+
 bot.command('help', async (ctx) => {
   await replyText(ctx, 'Botda /balance orqali ballaringizni ko‘ring, /invite orqali taklif havolasini oling va /prizes orqali NFT yoki Telegram Premium so‘rang. Yoki quyidagi menyudan foydalaning:', mainMenuKeyboard());
 });
@@ -1323,6 +1555,26 @@ bot.command('help', async (ctx) => {
 bot.command('balance', showBalance);
 bot.command('invite', showInviteLink);
 bot.command('prizes', showPrizeMenu);
+
+bot.action(/^purchase:(.+)$/, async (ctx) => {
+  const action = ctx.match[1];
+  if (action === 'home') {
+    await ctx.answerCbQuery();
+    await showPurchaseMenu(ctx);
+    return;
+  }
+  const match = /^premium:(\d+)$/.exec(action);
+  if (!match) {
+    await ctx.answerCbQuery('Xarid turi noto‘g‘ri.', { show_alert: true });
+    return;
+  }
+  try {
+    await createPremiumInvoice(ctx, Number(match[1]));
+  } catch (error) {
+    console.error(`Could not create Premium invoice for ${ctx.from.id}:`, error);
+    await replyText(ctx, 'To‘lov oynasini ochib bo‘lmadi. Birozdan keyin qayta urinib ko‘ring.');
+  }
+});
 
 bot.action(/^menu:(.+)$/, async (ctx) => {
   const action = ctx.match[1];
