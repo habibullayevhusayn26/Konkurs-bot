@@ -844,7 +844,7 @@ async function showSubscriptionPrompt(ctx) {
 function mainMenuKeyboard() {
   const rows = [];
   if (WEB_APP_URL) {
-    const label = stripBotEmojis('🎁 Mini Appn');
+    const label = stripBotEmojis('🎁 Mini App');
     const button = addPremiumButtonIcon(Markup.button.webApp(label, WEB_APP_URL), false);
     button.text = compactButtonLabel(button.text);
     rows.push([{
