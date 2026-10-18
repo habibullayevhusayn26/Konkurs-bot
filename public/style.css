@@ -669,6 +669,27 @@ h1 span,
   letter-spacing: 0.08em;
 }
 
+.premium-mark,
+.dialog-premium-mark {
+  color: #f7d778;
+  font-family: Manrope, sans-serif;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-align: center;
+  text-shadow: 0 0 28px rgba(255, 205, 91, 0.55);
+}
+
+.premium-mark {
+  font-size: clamp(15px, 4vw, 22px);
+}
+
+.dialog-premium-mark {
+  position: relative;
+  z-index: 1;
+  font-size: clamp(20px, 5vw, 28px);
+  line-height: 1.5;
+}
+
 .gift-edition {
   position: absolute;
   top: 9px;

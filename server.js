@@ -50,6 +50,7 @@ async function initializeDatabase() {
   await mongoClient.connect();
   const database = mongoClient.db(process.env.MONGODB_DB || 'telegram_moderation');
   collections = {
+    admins: database.collection('bot_admins'),
     channels: database.collection('required_channels'),
     campaignUsers: database.collection('campaign_users'),
     referrals: database.collection('qualified_referrals'),
@@ -69,6 +70,31 @@ async function initializeDatabase() {
 
 function isOwner(ctx) {
   return Boolean(OWNER_ID) && ctx.from && String(ctx.from.id) === OWNER_ID;
+}
+
+async function isAdmin(ctx) {
+  if (!ctx.from) return false;
+  const userId = String(ctx.from.id);
+  return userId === OWNER_ID || Boolean(await collections.admins.findOne({ _id: userId }));
+}
+
+async function getAdminIds() {
+  const admins = await collections.admins.find().project({ _id: 1 }).toArray();
+  return [...new Set([OWNER_ID, ...admins.map((admin) => admin._id)].filter(Boolean))];
+}
+
+async function notifyAdmins(text, keyboard) {
+  const adminIds = await getAdminIds();
+  const results = await Promise.all(adminIds.map(async (adminId) => {
+    try {
+      await bot.telegram.sendMessage(Number(adminId), text, keyboard);
+      return true;
+    } catch (error) {
+      console.error(`Could not notify admin ${adminId}:`, error);
+      return false;
+    }
+  }));
+  return results.some(Boolean);
 }
 
 function isSubscribedMember(member) {
@@ -159,7 +185,7 @@ async function ensureCampaignUser(user, referralPayload = '') {
         },
       },
     );
-    return existing;
+    return false;
   }
 
   const oldRecipient = await collections.previousRecipients.findOne({ _id: `user:${userId}` });
@@ -180,12 +206,12 @@ async function ensureCampaignUser(user, referralPayload = '') {
     created_at: new Date(),
     last_seen_at: new Date(),
   };
-  await collections.campaignUsers.updateOne(
+  const result = await collections.campaignUsers.updateOne(
     { _id: userId },
     { $setOnInsert: account },
     { upsert: true },
   );
-  return collections.campaignUsers.findOne({ _id: userId });
+  return Boolean(result.upsertedCount);
 }
 
 function parsePrizeLink(input) {
@@ -293,12 +319,15 @@ async function getCampaignPrizes(includeAdminCode = false) {
       telegram_url: 1,
       fragment_url: 1,
       image_url: 1,
+      type: 1,
+      premium_months: 1,
       referrals_cost: 1,
       ...(includeAdminCode ? { admin_code: 1 } : {}),
     })
     .toArray();
   return prizes.map((prize) => ({
     ...prize,
+    type: prize.type === 'premium' ? 'premium' : 'nft',
     referrals_cost: Number.isSafeInteger(prize.referrals_cost) ? prize.referrals_cost : 1,
   }));
 }
@@ -331,7 +360,7 @@ function callbackButton(text, data, style = 'primary') {
 }
 
 function urlButton(text, url) {
-  return Markup.button.url(text, url);
+  return { ...Markup.button.url(text, url), style: 'primary' };
 }
 
 function subscriptionKeyboard(channels) {
@@ -349,19 +378,22 @@ async function showSubscriptionPrompt(ctx) {
   );
 }
 
-function miniAppKeyboard() {
-  if (!WEB_APP_URL) return undefined;
-  return Markup.inlineKeyboard([
-    [Markup.button.webApp('🎁 Mini Appni ochish', WEB_APP_URL)],
-  ]);
+function mainMenuKeyboard() {
+  const rows = [];
+  if (WEB_APP_URL) {
+    rows.push([{ ...Markup.button.webApp('🎁 Mini Appni ochish', WEB_APP_URL), style: 'success' }]);
+  }
+  rows.push([callbackButton('💰 Balansim', 'menu:balance', 'success')]);
+  rows.push([callbackButton('🎁 Sovg‘alar va Premium', 'menu:prizes')]);
+  rows.push([callbackButton('🔗 Do‘stni taklif qilish', 'menu:invite')]);
+  return Markup.inlineKeyboard(rows);
 }
 
 async function showWelcome(ctx) {
-  const keyboard = miniAppKeyboard();
   const message = WEB_APP_URL
-    ? '👋 Salom! Do‘stlaringizni taklif qiling, referral ball to‘plang va Mini App’da NFT gift uchun so‘rov yuboring.'
-    : '👋 Salom! Bot ishlayapti, ammo Mini App tugmasi uchun .env faylida HTTPS WEB_APP_URL manzilini sozlash kerak.';
-  await ctx.reply(message, keyboard);
+    ? '👋 Salom! Referral ball to‘plang va NFT yoki Telegram Premium yutib oling. Barcha imkoniyatlar bot ichida ham mavjud:'
+    : '👋 Salom! Referral ball to‘plang va NFT yoki Telegram Premium yutib oling. WEB_APP_URL sozlanmagan, lekin botdagi funksiyalardan foydalanishingiz mumkin:';
+  await ctx.reply(message, mainMenuKeyboard());
 }
 
 async function getCampaignStats(userId) {
@@ -389,6 +421,123 @@ async function getCampaignStats(userId) {
     prizes,
     botLink,
   };
+}
+
+function prizeCallbackCode(prizeId) {
+  return crypto.createHash('sha256').update(prizeId).digest('hex').slice(0, 12);
+}
+
+function prizeTypeLabel(prize) {
+  return prize.type === 'premium' ? `Telegram Premium (${prize.premium_months} oy)` : `NFT ${prize.display_name}`;
+}
+
+async function createGiftRequest(telegramUser, prizeId) {
+  const userId = String(telegramUser.id);
+  if (!await isSubscribedToRequiredChannels(telegramUser.id)) {
+    throw new HttpError(403, 'Majburiy kanallarga obuna bo‘ling, so‘ng qayta urinib ko‘ring.');
+  }
+  if (await collections.giftRequests.findOne({ user_id: userId, status: 'pending' })) {
+    throw new HttpError(409, 'Sizda admin ko‘rib chiqayotgan sovg‘a so‘rovi bor.');
+  }
+  const [referralCount, previousRequests, profile] = await Promise.all([
+    collections.referrals.countDocuments({ inviter_id: userId }),
+    collections.giftRequests.find({ user_id: userId, status: 'approved' })
+      .project({ referrals_cost: 1 })
+      .toArray(),
+    collections.campaignUsers.findOne({ _id: userId }),
+  ]);
+  const referralBalance = Math.max(
+    0,
+    referralCount - previousRequests.reduce((total, request) => total + request.referrals_cost, 0),
+  );
+  const prize = await collections.prizes.findOne({ _id: prizeId, active: true });
+  if (!prize) {
+    throw new HttpError(409, 'Bu sovg‘a katalogda topilmadi. Sovg‘alar ro‘yxatini yangilang.');
+  }
+  const referralsCost = Number.isSafeInteger(prize.referrals_cost) ? prize.referrals_cost : 1;
+  if (referralBalance < referralsCost) {
+    throw new HttpError(409, `Bu sovg‘a uchun ${referralsCost} ball kerak. Joriy balansingiz: ${referralBalance}.`);
+  }
+  if (!(await getAdminIds()).length) {
+    throw new HttpError(503, 'Bot adminlari sozlanmagan. Keyinroq qayta urinib ko‘ring.');
+  }
+  const giftRequest = {
+    _id: crypto.randomUUID(),
+    user_id: userId,
+    first_name: profile ? profile.first_name : telegramUser.first_name || '',
+    username: profile ? profile.username : telegramUser.username || null,
+    prize_id: prize._id,
+    prize_type: prize.type === 'premium' ? 'premium' : 'nft',
+    premium_months: prize.premium_months || null,
+    prize_display_name: prize.display_name,
+    prize_telegram_url: prize.telegram_url || null,
+    referrals_cost: referralsCost,
+    status: 'pending',
+    created_at: new Date(),
+  };
+  try {
+    await collections.giftRequests.insertOne(giftRequest);
+  } catch (error) {
+    if (error.code === 11000) {
+      throw new HttpError(409, 'Sizda admin ko‘rib chiqayotgan sovg‘a so‘rovi bor.');
+    }
+    throw error;
+  }
+
+  const requester = `${giftRequest.first_name || 'Foydalanuvchi'}${giftRequest.username ? ` (@${giftRequest.username})` : ''}`;
+  const keyboardRows = [[
+    callbackButton('Qabul qilish', `admin:gift_request_approve:${giftRequest._id}`, 'success'),
+    callbackButton('Rad etish', `admin:gift_request_reject:${giftRequest._id}`, 'danger'),
+  ]];
+  if (giftRequest.prize_telegram_url) {
+    keyboardRows.push([urlButton('NFT havolasini ochish', giftRequest.prize_telegram_url)]);
+  }
+  const notified = await notifyAdmins(
+    `Yangi ${giftRequest.prize_type === 'premium' ? 'Telegram Premium' : 'NFT'} sovg‘a so‘rovi\n\n`
+      + `Foydalanuvchi: ${requester}\nTelegram ID: ${userId}\nSovg‘a: ${prizeTypeLabel(giftRequest)}\n`
+      + `Narxi: ${referralsCost} referral ball\nTasdiqlangach sovg‘ani foydalanuvchiga qo‘lda topshiring.`,
+    Markup.inlineKeyboard(keyboardRows),
+  );
+  return { giftRequest, referralBalance: referralBalance - referralsCost, notified };
+}
+
+async function showBalance(ctx) {
+  const stats = await getCampaignStats(String(ctx.from.id));
+  const pending = stats.giftRequest
+    ? `\n\n⏳ Kutilayotgan so‘rov: ${stats.giftRequest.prizeDisplayName}`
+    : '';
+  await ctx.reply(
+    `💰 Referral balansingiz\n\n✅ Tasdiqlangan takliflar: ${stats.referralCount}\n🎟 Sarflashingiz mumkin: ${stats.referralBalance} ball${pending}`,
+    mainMenuKeyboard(),
+  );
+}
+
+async function showInviteLink(ctx) {
+  const stats = await getCampaignStats(String(ctx.from.id));
+  const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(stats.botLink)}&text=${encodeURIComponent('Botga qo‘shiling va referral kampaniyasida qatnashing.')}`;
+  await ctx.reply(
+    `🔗 Do‘stlaringizga ushbu taklif havolasini yuboring:\n\n${stats.botLink}\n\nDo‘stingiz botni ishga tushirib, majburiy kanallarga obuna bo‘lgach 1 ball olasiz.`,
+    Markup.inlineKeyboard([
+      [urlButton('📤 Do‘stga ulashish', shareUrl)],
+      [callbackButton('⬅️ Bosh menyu', 'menu:home')],
+    ]),
+  );
+}
+
+async function showPrizeMenu(ctx) {
+  const prizes = await getCampaignPrizes();
+  const rows = prizes.map((prize) => [
+    callbackButton(
+      `${prize.type === 'premium' ? '⭐' : '💎'} ${prize.display_name} · ${prize.referrals_cost} ball`,
+      `menu:request:${prizeCallbackCode(prize._id)}`,
+      'success',
+    ),
+  ]);
+  rows.push([callbackButton('⬅️ Bosh menyu', 'menu:home')]);
+  const text = prizes.length
+    ? '🎁 Yutish mumkin bo‘lgan sovg‘alar:\n\nHar bir sovg‘ani tanlab so‘rov yuboring. Admin tasdiqlagach NFT yoki Premium obunasini qo‘lda topshiradi.'
+    : 'Hozircha sovg‘alar qo‘shilmagan. Keyinroq qayta tekshiring.';
+  await ctx.reply(text, Markup.inlineKeyboard(rows));
 }
 
 function sendJson(res, status, value) {
@@ -512,96 +661,27 @@ async function handleHttpRequest(req, res) {
       sendJson(res, 405, { error: 'POST so‘rovi talab qilinadi.' });
       return;
     }
-    if (!OWNER_ID) {
-      throw new HttpError(503, 'Admin ID sozlanmagan. Bot administratoriga murojaat qiling.');
-    }
     const body = await readJsonBody(req);
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
       throw new HttpError(400, 'JSON so‘rovi noto‘g‘ri.');
     }
     const telegramUser = validateWebAppInitData(body.initData);
     if (typeof body.prizeId !== 'string' || !/^[a-z0-9-]{1,100}$/i.test(body.prizeId)) {
-      throw new HttpError(400, 'Tanlangan NFT noto‘g‘ri.');
+      throw new HttpError(400, 'Tanlangan sovg‘a noto‘g‘ri.');
     }
     await ensureCampaignUser(telegramUser);
-    if (!await isSubscribedToRequiredChannels(telegramUser.id)) {
-      throw new HttpError(403, 'Majburiy kanallarga obuna bo‘ling, so‘ng Mini App’ni qayta oching.');
-    }
-
-    const userId = String(telegramUser.id);
-    if (await collections.giftRequests.findOne({ user_id: userId, status: 'pending' })) {
-      throw new HttpError(409, 'Sizda admin ko‘rib chiqayotgan sovg‘a so‘rovi bor.');
-    }
-    const [referralCount, previousRequests, profile] = await Promise.all([
-      collections.referrals.countDocuments({ inviter_id: userId }),
-      collections.giftRequests.find({ user_id: userId, status: 'approved' })
-        .project({ referrals_cost: 1 })
-        .toArray(),
-      collections.campaignUsers.findOne({ _id: userId }),
-    ]);
-    const referralBalance = Math.max(
-      0,
-      referralCount - previousRequests.reduce((total, request) => total + request.referrals_cost, 0),
-    );
-    const prize = await collections.prizes.findOne({
-      _id: body.prizeId,
-      active: true,
-    });
-    if (!prize) {
-      throw new HttpError(409, 'Bu sovg‘a katalogda topilmadi. Sovg‘alar ro‘yxatini yangilang.');
-    }
-    const referralsCost = Number.isSafeInteger(prize.referrals_cost) ? prize.referrals_cost : 1;
-    if (referralBalance < referralsCost) {
-      throw new HttpError(409, `Bu NFT uchun ${referralsCost} ball kerak. Joriy balansingiz: ${referralBalance}.`);
-    }
-
-    const giftRequest = {
-      _id: crypto.randomUUID(),
-      user_id: userId,
-      first_name: profile ? profile.first_name : telegramUser.first_name || '',
-      username: profile ? profile.username : telegramUser.username || null,
-      prize_id: prize._id,
-      prize_display_name: prize.display_name,
-      prize_telegram_url: prize.telegram_url,
-      referrals_cost: referralsCost,
-      status: 'pending',
-      created_at: new Date(),
-    };
-    try {
-      await collections.giftRequests.insertOne(giftRequest);
-    } catch (error) {
-      if (error.code === 11000) {
-        throw new HttpError(409, 'Sizda admin ko‘rib chiqayotgan sovg‘a so‘rovi bor.');
-      }
-      throw error;
-    }
-
-    const requester = `${giftRequest.first_name || 'Foydalanuvchi'}${giftRequest.username ? ` (@${giftRequest.username})` : ''}`;
-    try {
-      await bot.telegram.sendMessage(
-        Number(OWNER_ID),
-        `Yangi NFT sovg‘a so‘rovi\n\nFoydalanuvchi: ${requester}\nTelegram ID: ${userId}\nNFT: ${prize.display_name}\nNarxi: ${referralsCost} referral ball\nBu NFT sovg‘a katalogida cheksiz mavjud.`,
-        Markup.inlineKeyboard([
-          [
-            callbackButton('Qabul qilish', `admin:gift_request_approve:${requestId}`, 'success'),
-            callbackButton('Rad etish', `admin:gift_request_reject:${requestId}`, 'danger'),
-          ],
-          [urlButton('NFT havolasini ochish', prize.telegram_url)],
-        ]),
-      );
-    } catch (error) {
-      console.error(`Gift request ${requestId} was saved, but owner notification failed:`, error);
+    const request = await createGiftRequest(telegramUser, body.prizeId);
+    if (!request.notified) {
       sendJson(res, 502, {
-        error: 'So‘rov saqlandi, lekin adminga xabar yuborilmadi. Bot administratoriga murojaat qiling.',
+        error: 'So‘rov saqlandi, lekin adminlardan hech biriga xabar yuborilmadi. Bot administratoriga murojaat qiling.',
         requestSaved: true,
       });
       return;
     }
-
     sendJson(res, 201, {
       status: 'pending',
-      prizeDisplayName: prize.display_name,
-      referralBalance: referralBalance - referralsCost,
+      prizeDisplayName: request.giftRequest.prize_display_name,
+      referralBalance: request.referralBalance,
     });
     return;
   }
@@ -621,22 +701,42 @@ async function handleHttpRequest(req, res) {
   res.end(req.method === 'HEAD' ? undefined : content);
 }
 
-function ownerPanelKeyboard() {
-  return Markup.inlineKeyboard([
+function ownerPanelKeyboard(includeAdminManagement = false) {
+  const rows = [
     [callbackButton('📊 Referral statistikasi', 'admin:stats')],
-    [callbackButton('💎 NFT sovg‘alarini boshqarish', 'admin:prizes')],
-    [callbackButton('NFT so‘rovlari', 'admin:gift_requests')],
+    [callbackButton('💎 Sovg‘alar: NFT va Premium', 'admin:prizes')],
+    [callbackButton('🎁 Sovg‘a so‘rovlari', 'admin:gift_requests')],
     [callbackButton('🎁 Kutilayotgan giftlar', 'admin:rewards')],
     [callbackButton('📢 Majburiy obuna kanallari', 'admin:channels')],
-  ]);
+  ];
+  if (includeAdminManagement) rows.push([callbackButton('👥 Adminlarni boshqarish', 'admin:admins')]);
+  return Markup.inlineKeyboard(rows);
 }
 
 async function showOwnerPanel(ctx, edit = false) {
-  const text = '🛠️ Referral bot boshqaruvi\n\nBo‘limni tanlang:';
+  const keyboard = ownerPanelKeyboard(isOwner(ctx));
+  const text = '🛠️ Bot boshqaruvi\n\nBo‘limni tanlang:';
   if (edit && ctx.callbackQuery && ctx.callbackQuery.message) {
-    await ctx.editMessageText(text, ownerPanelKeyboard());
+    await ctx.editMessageText(text, keyboard);
   } else {
-    await ctx.reply(text, ownerPanelKeyboard());
+    await ctx.reply(text, keyboard);
+  }
+}
+
+async function renderAdmins(ctx, edit = false) {
+  const admins = await collections.admins.find().sort({ _id: 1 }).toArray();
+  const rows = admins.map((admin) => [
+    callbackButton(`🗑 Admin ${admin._id} ni o‘chirish`, `admin:admin_remove:${admin._id}`, 'danger'),
+  ]);
+  rows.push([callbackButton('➕ Admin qo‘shish', 'admin:admin_add', 'success')]);
+  rows.push([callbackButton('⬅️ Panelga qaytish', 'admin:panel')]);
+  const text = admins.length
+    ? `👥 Qo‘shimcha adminlar (${admins.length}):\n${admins.map((admin) => `• ${admin._id}`).join('\n')}\n\nBot egasining huquqlari alohida va o‘zgarmaydi.`
+    : '👥 Hozircha qo‘shimcha admin yo‘q. Bot egasi barcha admin huquqlarini saqlab qoladi.';
+  if (edit && ctx.callbackQuery && ctx.callbackQuery.message) {
+    await ctx.editMessageText(text, Markup.inlineKeyboard(rows));
+  } else {
+    await ctx.reply(text, Markup.inlineKeyboard(rows));
   }
 }
 
@@ -675,11 +775,12 @@ async function renderPrizes(ctx, edit = false) {
   const rows = prizes.map((prize) => [
     callbackButton(`🗑 ${prize.display_name} · ${prize.referrals_cost || 1} ball`, `admin:prize_delete:${prize.admin_code}`, 'danger'),
   ]);
-  rows.push([callbackButton('➕ NFT havolasi qo‘shish', 'admin:prize_add', 'success')]);
+  rows.push([callbackButton('➕ NFT qo‘shish', 'admin:prize_add', 'success')]);
+  rows.push([callbackButton('⭐ Premium sovg‘a qo‘shish', 'admin:premium_add', 'success')]);
   rows.push([callbackButton('⬅️ Panelga qaytish', 'admin:panel')]);
   const text = prizes.length
-    ? `NFT sovg‘alar (${prizes.length}):\n\n${prizes.map((prize, index) => `${index + 1}. ${prize.display_name} — ${prize.referrals_cost || 1} referral ball\n${prize.telegram_url}`).join('\n\n')}\n\nHar bir katalog sovg‘asi foydalanuvchi so‘rovlari uchun cheksiz takrorlanadi.`
-    : '💎 Hozircha NFT yutuqlari qo‘shilmagan. Faqat sovg‘a qilishga tayyor, o‘zingizga tegishli Telegram NFT havolasini kiriting.';
+    ? `Sovg‘alar katalogi (${prizes.length}):\n\n${prizes.map((prize, index) => `${index + 1}. ${prizeTypeLabel(prize)} — ${prize.referrals_cost || 1} referral ball${prize.telegram_url ? `\n${prize.telegram_url}` : ''}`).join('\n\n')}\n\nNFT va Premium sovg‘alari admin tomonidan qo‘lda topshiriladi.`
+    : '🎁 Hozircha sovg‘alar qo‘shilmagan. NFT havolasini yoki Telegram Premium obuna muddatini qo‘shing.';
   if (edit && ctx.callbackQuery && ctx.callbackQuery.message) {
     await ctx.editMessageText(text, Markup.inlineKeyboard(rows));
   } else {
@@ -715,14 +816,14 @@ async function showGiftRequests(ctx, edit = false) {
     .limit(20)
     .toArray();
   const text = requests.length
-    ? `Kutilayotgan NFT so‘rovlari (${requests.length}${requests.length === 20 ? '+' : ''}):\n\n${requests.map((request, index) => `${index + 1}. ${request.first_name || 'Foydalanuvchi'}${request.username ? ` (@${request.username})` : ''} — ID: ${request.user_id}\n   ${request.prize_display_name} — ${request.referrals_cost} referral ball`).join('\n\n')}`
-    : 'Hozircha NFT sovg‘a so‘rovlari yo‘q.';
+    ? `Kutilayotgan sovg‘a so‘rovlari (${requests.length}${requests.length === 20 ? '+' : ''}):\n\n${requests.map((request, index) => `${index + 1}. ${request.first_name || 'Foydalanuvchi'}${request.username ? ` (@${request.username})` : ''} — ID: ${request.user_id}\n   ${request.prize_display_name} — ${request.referrals_cost} referral ball`).join('\n\n')}`
+    : 'Hozircha sovg‘a so‘rovlari yo‘q.';
   const rows = requests.flatMap((request) => [
     [
       callbackButton(`Qabul: ${request.prize_display_name}`, `admin:gift_request_approve:${request._id}`, 'success'),
       callbackButton('Rad etish', `admin:gift_request_reject:${request._id}`, 'danger'),
     ],
-    [urlButton('NFT havolasini ochish', request.prize_telegram_url)],
+    ...(request.prize_telegram_url ? [[urlButton('NFT havolasini ochish', request.prize_telegram_url)]] : []),
   ]);
   rows.push([callbackButton('Panelga qaytish', 'admin:panel')]);
   if (edit && ctx.callbackQuery && ctx.callbackQuery.message) {
@@ -732,12 +833,13 @@ async function showGiftRequests(ctx, edit = false) {
   }
 }
 
-async function handleOwnerInput(ctx) {
-  const session = ownerSessions.get(OWNER_ID);
+async function handleAdminInput(ctx) {
+  const adminId = String(ctx.from.id);
+  const session = ownerSessions.get(adminId);
   if (!session) return false;
   const text = ctx.message.text || '';
   if (/^\/cancel(?:@\w+)?(?:\s|$)/i.test(text.trim())) {
-    ownerSessions.delete(OWNER_ID);
+    ownerSessions.delete(adminId);
     await ctx.reply('❎ Amal bekor qilindi.');
     await showOwnerPanel(ctx);
     return true;
@@ -746,7 +848,7 @@ async function handleOwnerInput(ctx) {
     try {
       const prize = parsePrizeLink(text);
       await verifyPrizeImage(prize);
-      ownerSessions.set(OWNER_ID, { action: 'prize_price', prize });
+      ownerSessions.set(adminId, { action: 'prize_price', prize });
       await ctx.reply(`${prize.display_name} NFT uchun qancha referral ball belgilaysiz? 1 dan 1 000 000 gacha butun son yuboring. Bekor qilish: /cancel`);
     } catch (error) {
       await ctx.reply(`⚠️ ${error.message}\n\nMasalan: https://t.me/nft/LunarSnake-89030\nQayta yuboring yoki /cancel yozing.`);
@@ -767,13 +869,13 @@ async function handleOwnerInput(ctx) {
           $setOnInsert: {
             ...prize,
               created_at: new Date(),
-            created_by: OWNER_ID,
+            created_by: adminId,
           },
           $set: { active: true, referrals_cost: referralsCost },
         },
         { upsert: true },
       );
-      ownerSessions.delete(OWNER_ID);
+      ownerSessions.delete(adminId);
       await ctx.reply(result.upsertedCount
         ? `${prize.display_name} NFT ${referralsCost} referral ball narxi bilan qo‘shildi.`
         : `${prize.display_name} NFT narxi ${referralsCost} referral ball qilib saqlandi.`);
@@ -783,10 +885,71 @@ async function handleOwnerInput(ctx) {
     }
     return true;
   }
+  if (session.action === 'premium_months') {
+    const months = Number(text.trim());
+    if (![3, 6, 12].includes(months)) {
+      await ctx.reply('Premium muddati 3, 6 yoki 12 oy bo‘lishi mumkin. Qayta kiriting yoki /cancel yozing.');
+      return true;
+    }
+    const prize = {
+      _id: `premium-${months}-months`,
+      type: 'premium',
+      premium_months: months,
+      model: `Telegram Premium — ${months} oy`,
+      display_name: `Telegram Premium — ${months} oy`,
+    };
+    ownerSessions.set(adminId, { action: 'premium_price', prize });
+    await ctx.reply(`${months} oylik Telegram Premium uchun referral ball narxini yuboring (1–1 000 000). /cancel`);
+    return true;
+  }
+  if (session.action === 'premium_price') {
+    const referralsCost = Number(text.trim());
+    if (!Number.isSafeInteger(referralsCost) || referralsCost < 1 || referralsCost > 1000000) {
+      await ctx.reply('Narx 1 dan 1 000 000 gacha bo‘lgan butun son bo‘lishi kerak. Qayta kiriting yoki /cancel yozing.');
+      return true;
+    }
+    try {
+      const { prize } = session;
+      const result = await collections.prizes.updateOne(
+        { _id: prize._id },
+        {
+          $setOnInsert: { ...prize, created_at: new Date(), created_by: adminId },
+          $set: { active: true, referrals_cost: referralsCost },
+        },
+        { upsert: true },
+      );
+      ownerSessions.delete(adminId);
+      await ctx.reply(result.upsertedCount
+        ? `${prize.display_name} ${referralsCost} referral ball narxi bilan qo‘shildi.`
+        : `${prize.display_name} narxi ${referralsCost} referral ball qilib saqlandi.`);
+      await renderPrizes(ctx);
+    } catch (error) {
+      await ctx.reply(`Premium sovg‘ani saqlab bo‘lmadi: ${error.message}. Qayta yuboring yoki /cancel yozing.`);
+    }
+    return true;
+  }
+  if (session.action === 'admin_add') {
+    const newAdminId = text.trim();
+    if (!/^\d{1,20}$/.test(newAdminId)
+      || !Number.isSafeInteger(Number(newAdminId))
+      || newAdminId === OWNER_ID) {
+      await ctx.reply('Adminning raqamli Telegram ID’sini yuboring. Bot egasi allaqachon doimiy admin.');
+      return true;
+    }
+    await collections.admins.updateOne(
+      { _id: newAdminId },
+      { $setOnInsert: { _id: newAdminId, added_at: new Date(), added_by: adminId } },
+      { upsert: true },
+    );
+    ownerSessions.delete(adminId);
+    await ctx.reply(`✅ ${newAdminId} admin sifatida qo‘shildi.`);
+    await renderAdmins(ctx);
+    return true;
+  }
   if (session.action === 'channel_add' || session.action === 'channel_edit') {
     try {
       await saveChannelFromOwner(ctx, text, session.channelId);
-      ownerSessions.delete(OWNER_ID);
+      ownerSessions.delete(adminId);
       await ctx.reply('✅ Majburiy obuna kanali saqlandi.');
       await renderChannels(ctx);
     } catch (error) {
@@ -799,16 +962,22 @@ async function handleOwnerInput(ctx) {
 
 bot.use(async (ctx, next) => {
   if (!ctx.chat || ctx.chat.type !== 'private' || !ctx.from) return;
-  const owner = isOwner(ctx);
-  if (owner && ctx.message && ctx.message.text && ownerSessions.has(OWNER_ID)) {
-    if (await handleOwnerInput(ctx)) return;
+  const adminId = String(ctx.from.id);
+  const admin = await isAdmin(ctx);
+  if (admin && ctx.message && ctx.message.text && ownerSessions.has(adminId)) {
+    if (await handleAdminInput(ctx)) return;
   }
 
-  const referralPayload = ctx.message && /^\/start(?:@\w+)?(?:\s|$)/i.test(ctx.message.text || '')
+  const isStartCommand = Boolean(ctx.message && /^\/start(?:@\w+)?(?:\s|$)/i.test(ctx.message.text || ''));
+  const referralPayload = isStartCommand
     ? startReferralPayload(ctx)
     : '';
-  await ensureCampaignUser(ctx.from, referralPayload);
-  if (owner || (ctx.callbackQuery && ctx.callbackQuery.data === 'subscription:check')) {
+  const newCampaignUser = await ensureCampaignUser(ctx.from, referralPayload);
+  if (newCampaignUser && isStartCommand) {
+    const displayName = `${ctx.from.first_name || 'Foydalanuvchi'}${ctx.from.username ? ` (@${ctx.from.username})` : ''}`;
+    await notifyAdmins(`🆕 Yangi obunachi botni ishga tushirdi.\n\nFoydalanuvchi: ${displayName}\nTelegram ID: ${adminId}`);
+  }
+  if (admin || (ctx.callbackQuery && ctx.callbackQuery.data === 'subscription:check')) {
     await next();
     return;
   }
@@ -851,12 +1020,63 @@ bot.start(async (ctx) => {
 });
 
 bot.command('help', async (ctx) => {
-  await ctx.reply('Do‘stlaringizni botga taklif qiling. Taklif qilgan foydalanuvchi botni ishga tushirib, majburiy kanallarga obuna bo‘lgach 1 referral ball olasiz. Balans yetadigan NFT sovg‘ani Mini App’da tanlab, adminga so‘rov yuboring.');
+  await ctx.reply('Botda /balance orqali ballaringizni ko‘ring, /invite orqali taklif havolasini oling va /prizes orqali NFT yoki Telegram Premium so‘rang. Yoki quyidagi menyudan foydalaning:', mainMenuKeyboard());
+});
+
+bot.command('balance', showBalance);
+bot.command('invite', showInviteLink);
+bot.command('prizes', showPrizeMenu);
+
+bot.action(/^menu:(.+)$/, async (ctx) => {
+  const action = ctx.match[1];
+  if (action === 'home') {
+    await ctx.answerCbQuery();
+    await showWelcome(ctx);
+    return;
+  }
+  if (action === 'balance') {
+    await ctx.answerCbQuery();
+    await showBalance(ctx);
+    return;
+  }
+  if (action === 'invite') {
+    await ctx.answerCbQuery();
+    await showInviteLink(ctx);
+    return;
+  }
+  if (action === 'prizes') {
+    await ctx.answerCbQuery();
+    await showPrizeMenu(ctx);
+    return;
+  }
+  if (action.startsWith('request:')) {
+    const code = action.slice('request:'.length);
+    if (!/^[a-f0-9]{12}$/.test(code)) {
+      await ctx.answerCbQuery('Sovg‘a identifikatori noto‘g‘ri.', { show_alert: true });
+      return;
+    }
+    const prizes = await getCampaignPrizes();
+    const prize = prizes.find((entry) => prizeCallbackCode(entry._id) === code);
+    if (!prize) {
+      await ctx.answerCbQuery('Bu sovg‘a katalogda topilmadi.', { show_alert: true });
+      return;
+    }
+    try {
+      const request = await createGiftRequest(ctx.from, prize._id);
+      await ctx.answerCbQuery(request.notified ? '✅ So‘rov adminga yuborildi.' : 'So‘rov saqlandi, ammo adminlarga xabar yetmadi.', { show_alert: true });
+      await ctx.reply(`${prizeTypeLabel(prize)} uchun so‘rovingiz qabul qilindi. Admin sovg‘ani sizga topshiradi.`, mainMenuKeyboard());
+    } catch (error) {
+      if (!(error instanceof HttpError)) throw error;
+      await ctx.answerCbQuery(error.message, { show_alert: true });
+    }
+    return;
+  }
+  await ctx.answerCbQuery('Noma’lum amal.', { show_alert: true });
 });
 
 bot.command('admin', async (ctx) => {
-  if (!isOwner(ctx)) {
-    await ctx.reply('⛔ Bu buyruq faqat bot egasi uchun.');
+  if (!await isAdmin(ctx)) {
+    await ctx.reply('⛔ Bu buyruq faqat bot adminlari uchun.');
     return;
   }
   await showOwnerPanel(ctx);
@@ -879,14 +1099,35 @@ bot.action('subscription:check', async (ctx) => {
 });
 
 bot.action(/^admin:(.+)$/, async (ctx) => {
-  if (!isOwner(ctx)) {
-    await ctx.answerCbQuery('⛔ Bu boshqaruv tugmasi bot egasi uchun.', { show_alert: true });
+  if (!await isAdmin(ctx)) {
+    await ctx.answerCbQuery('⛔ Bu boshqaruv tugmasi bot adminlari uchun.', { show_alert: true });
     return;
   }
   const action = ctx.match[1];
+  const ownerOnly = action === 'admins'
+    || action === 'admin_add'
+    || action.startsWith('admin_remove:');
+  if (ownerOnly && !isOwner(ctx)) {
+    await ctx.answerCbQuery('⛔ Bu amal faqat bot egasi uchun.', { show_alert: true });
+    return;
+  }
   await ctx.answerCbQuery();
   if (action === 'panel') {
     await showOwnerPanel(ctx, true);
+  } else if (action === 'admins') {
+    await renderAdmins(ctx, true);
+  } else if (action === 'admin_add') {
+    ownerSessions.set(String(ctx.from.id), { action: 'admin_add' });
+    await ctx.reply('Qo‘shiladigan adminning raqamli Telegram ID’sini yuboring. Bekor qilish: /cancel');
+  } else if (action.startsWith('admin_remove:')) {
+    const adminId = action.slice('admin_remove:'.length);
+    if (!/^\d{1,20}$/.test(adminId)) {
+      await ctx.reply('Admin ID formati noto‘g‘ri.');
+      return;
+    }
+    const result = await collections.admins.deleteOne({ _id: adminId });
+    await ctx.reply(result.deletedCount ? `✅ ${adminId} adminlar ro‘yxatidan o‘chirildi.` : 'ℹ️ Admin topilmadi.');
+    await renderAdmins(ctx, true);
   } else if (action === 'stats') {
     const [users, referrals, pending, delivered, pendingRequests] = await Promise.all([
       collections.campaignUsers.countDocuments({}),
@@ -914,13 +1155,16 @@ bot.action(/^admin:(.+)$/, async (ctx) => {
   } else if (action === 'gift_requests') {
     await showGiftRequests(ctx, true);
   } else if (action === 'prize_add') {
-    ownerSessions.set(OWNER_ID, { action: 'prize_add' });
+    ownerSessions.set(String(ctx.from.id), { action: 'prize_add' });
     await ctx.reply(
       'Sovg‘a qilmoqchi bo‘lgan haqiqiy Telegram NFT gift havolasini yuboring.\n\n'
         + 'Masalan: https://t.me/nft/LunarSnake-89030\n'
         + 'Telegram NFT havolasi yoki Fragment’dagi gift sahifasi qabul qilinadi. Rasm mavjudligi tekshiriladi. '
         + 'Havoladan so‘ng referral ball narxini kiritasiz. Bir katalog sovg‘asi cheksiz so‘ralishi mumkin; har bir qabul qilingan so‘rov uchun mos NFT’ni qo‘lda topshirishingiz kerak. Bekor qilish: /cancel',
     );
+  } else if (action === 'premium_add') {
+    ownerSessions.set(String(ctx.from.id), { action: 'premium_months' });
+    await ctx.reply('Telegram Premium obuna muddatini yuboring: 3, 6 yoki 12 oy. Keyin referral ball narxini belgilaysiz. Admin tasdiqlagach Premium’ni qo‘lda sovg‘a qiladi. Bekor qilish: /cancel');
   } else if (action.startsWith('gift_request_approve:') || action.startsWith('gift_request_reject:')) {
     const approve = action.startsWith('gift_request_approve:');
     const requestId = action.slice(approve
@@ -936,7 +1180,7 @@ bot.action(/^admin:(.+)$/, async (ctx) => {
         $set: {
           status: approve ? 'approved' : 'rejected',
           reviewed_at: new Date(),
-          reviewed_by: OWNER_ID,
+          reviewed_by: String(ctx.from.id),
         },
       },
       { returnDocument: 'after', includeResultMetadata: false },
@@ -945,9 +1189,14 @@ bot.action(/^admin:(.+)$/, async (ctx) => {
       await ctx.reply('Bu so‘rov avval ko‘rib chiqilgan yoki topilmadi.');
       return;
     }
+    const itemName = prizeTypeLabel({
+      type: giftRequest.prize_type,
+      premium_months: giftRequest.premium_months,
+      display_name: giftRequest.prize_display_name,
+    });
     const userMessage = approve
-      ? `${giftRequest.prize_display_name} NFT sovg‘a so‘rovingiz qabul qilindi. Admin sovg‘ani sizga topshiradi.`
-      : `${giftRequest.prize_display_name} NFT sovg‘a so‘rovingiz rad etildi. Referral ballaringiz sarflanmadi.`;
+      ? `${itemName} sovg‘a so‘rovingiz qabul qilindi. Admin sovg‘ani sizga topshiradi.`
+      : `${itemName} sovg‘a so‘rovingiz rad etildi. Referral ballaringiz sarflanmadi.`;
     let userNotified = true;
     try {
       await bot.telegram.sendMessage(Number(giftRequest.user_id), userMessage);
@@ -956,7 +1205,7 @@ bot.action(/^admin:(.+)$/, async (ctx) => {
       console.error(`Could not notify user ${giftRequest.user_id} about gift request ${requestId}:`, error);
     }
     await ctx.reply(
-      `${approve ? 'NFT so‘rovi qabul qilindi.' : 'NFT so‘rovi rad etildi.'}${userNotified ? '' : ' Foydalanuvchiga bot orqali xabar yetkazilmadi.'}`,
+      `${approve ? 'Sovg‘a so‘rovi qabul qilindi.' : 'Sovg‘a so‘rovi rad etildi.'}${userNotified ? '' : ' Foydalanuvchiga bot orqali xabar yetkazilmadi.'}`,
     );
     await showGiftRequests(ctx);
   } else if (action.startsWith('prize_delete:')) {
@@ -979,14 +1228,14 @@ bot.action(/^admin:(.+)$/, async (ctx) => {
     }
     const result = await collections.rewards.updateOne(
       { _id: userId, status: 'pending' },
-      { $set: { status: 'delivered', delivered_at: new Date(), delivered_by: OWNER_ID } },
+      { $set: { status: 'delivered', delivered_at: new Date(), delivered_by: String(ctx.from.id) } },
     );
     if (result.modifiedCount) {
       const reward = await collections.rewards.findOne({ _id: userId });
       if (reward && reward.prize_id) {
         await collections.prizes.updateOne(
           { _id: reward.prize_id, reserved_by: userId },
-          { $set: { delivered_at: new Date(), delivered_by: OWNER_ID } },
+          { $set: { delivered_at: new Date(), delivered_by: String(ctx.from.id) } },
         );
       }
     }
@@ -995,11 +1244,11 @@ bot.action(/^admin:(.+)$/, async (ctx) => {
   } else if (action === 'channels') {
     await renderChannels(ctx, true);
   } else if (action === 'channel_add') {
-    ownerSessions.set(OWNER_ID, { action: 'channel_add' });
+    ownerSessions.set(String(ctx.from.id), { action: 'channel_add' });
     await ctx.reply('➕ Kanal username’ini (@kanal) yoki ID’sini yuboring. Yopiq kanal uchun ID va taklif havolasini yuboring. Bot kanalda admin bo‘lishi kerak. Bekor qilish: /cancel');
   } else if (action.startsWith('channel_edit:')) {
     const channelId = Buffer.from(action.slice('channel_edit:'.length), 'base64url').toString();
-    ownerSessions.set(OWNER_ID, { action: 'channel_edit', channelId });
+    ownerSessions.set(String(ctx.from.id), { action: 'channel_edit', channelId });
     await ctx.reply(`✏️ Yangi kanal username’i/ID’si va kerak bo‘lsa taklif havolasini yuboring. Eski kanal: ${channelId}. Bekor qilish: /cancel`);
   } else if (action.startsWith('channel_delete:')) {
     const channelId = Buffer.from(action.slice('channel_delete:'.length), 'base64url').toString();

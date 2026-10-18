@@ -1,6 +1,6 @@
 # Telegram NFT Gift Referral Bot
 
-Do‘stlarni taklif qilgan foydalanuvchining referral balansini kuzatadigan Telegram bot va Mini App. Foydalanuvchi balans yetadigan NFT giftni tanlab, admin’ga so‘rov yuboradi. Admin so‘rovni qabul qilgach sovg‘ani qo‘lda topshiradi. Guruh moderatsiyasi va guruh funksiyalari bu versiyada mavjud emas.
+Do‘stlarni taklif qilgan foydalanuvchining referral balansini kuzatadigan Telegram bot va Mini App. Foydalanuvchi NFT gift yoki Telegram Premium obunasini tanlab, admin’ga so‘rov yuboradi. Admin so‘rovni qabul qilgach sovg‘ani qo‘lda topshiradi. Guruh moderatsiyasi va guruh funksiyalari bu versiyada mavjud emas.
 
 ## Talablar
 
@@ -28,8 +28,9 @@ Bot va Mini App bir xil domen orqali xizmat qilishi kerak, chunki Mini App API s
 - Taklif faqat botning shaxsiy chatida ilgari qayd etilmagan yangi foydalanuvchi `/start` bosib, barcha majburiy kanallarga obuna bo‘lgach hisoblanadi.
 - Bir Telegram akkaunti faqat bir marta hisoblanadi; o‘zini taklif qilish hisoblanmaydi.
 - Har bir tasdiqlangan referral foydalanuvchi balansiga 1 ball qo‘shadi.
-- Mini App balans yetadigan NFT sovg‘alarni ko‘rsatadi. Katalogdagi har bir sovg‘a cheksiz so‘ralishi mumkin; bir xil katalog sovg‘asiga bir necha marta buyurtma berish mumkin. Foydalanuvchi sovg‘ani tanlab so‘rov yuboradi va admin bot orqali xabar oladi.
-- Admin so‘rovni qabul qilganda ball sarflanadi; rad qilganda ball sarflanmaydi. Har bir qabul qilingan so‘rov uchun admin sovg‘ani qo‘lda topshiradi.
+- Mini App va bot foydalanuvchiga balansni ko‘rish, referral havolasini ulashish hamda NFT yoki Telegram Premium sovg‘alariga so‘rov yuborish imkonini beradi. Bot buyruqlari: `/balance`, `/invite` va `/prizes`.
+- Katalogdagi sovg‘alar, jumladan Premium obunalari, referral ball narxi bilan ko‘rsatiladi. Admin so‘rovni qabul qilganda ball sarflanadi; rad qilganda ball sarflanmaydi. Har bir qabul qilingan sovg‘ani admin qo‘lda topshiradi.
+- Botga yangi foydalanuvchi birinchi marta `/start` yuborganda barcha adminlarga xabar boradi.
 - Mini App Telegram `initData` imzosini serverda tekshiradi va eskirgan imzolarni rad etadi.
 - Mini App’da NFT’larning haqiqiy rasmi, modeli va seriya raqami ko‘rsatiladi. Sovg‘a tafsilotida egasining shaxsiy ma’lumoti oshkor qilinmaydi. NFT rasmi `nft.fragment.com` manzilidan yuklanadi; oddiy Stars gift katalogidan foydalanilmaydi.
 
@@ -41,18 +42,21 @@ Katalogdagi sovg‘a uchun so‘rovlar soni cheklanmagan; bir xil katalog sovg�
 
 ## Admin panel
 
-Bot egasining shaxsiy chatida `/admin` yuboring:
+Bot egasi yoki qo‘shimcha admin shaxsiy chatda `/admin` yuboradi:
 
 - **Referral statistikasi** — foydalanuvchilar, tasdiqlangan takliflar va kutilayotgan so‘rovlar.
 - **NFT sovg‘alarini boshqarish** — haqiqiy NFT havolasini va ball narxini qo‘shish yoki katalogdan olib tashlash.
-- **NFT so‘rovlari** — foydalanuvchi so‘rovini qabul qilish yoki rad etish. So‘rov xabari admin’ga bot orqali ham yuboriladi.
+- **Sovg‘a so‘rovlari** — foydalanuvchi so‘rovini qabul qilish yoki rad etish. So‘rov xabari barcha adminlarga bot orqali yuboriladi.
+- **Telegram Premium sovg‘asi** — 3, 6 yoki 12 oylik Premium mukofot qo‘shib, referral ball narxini belgilang. Tasdiqlangan Premium so‘rovini admin Telegram orqali qo‘lda sovg‘a qiladi.
 - **Majburiy obuna kanallari** — kanal qo‘shish, tahrirlash yoki o‘chirish. Obunani tekshirish uchun bot kanal administratori bo‘lishi kerak.
+- **Adminlarni boshqarish** — faqat bot egasi qo‘shimcha adminlarni raqamli Telegram ID orqali qo‘shishi yoki olib tashlashi mumkin. Qo‘shimcha adminlar so‘rovlarni ko‘rib chiqadi va boshqa admin bo‘limlaridan foydalanadi; bot egasining huquqi saqlanib qoladi.
 
 `OWNER_ID` raqamli Telegram user ID bo‘lishi kerak. Ommaviy kanal username’ini (`@kanal`) yoki yopiq kanal uchun `-100... https://t.me/+invite` ko‘rinishida kiriting.
+Qo‘shimcha adminlar bot egasining `/admin` panelidan boshqariladi; ular botni avval `/start` qilib ochishi kerak, aks holda Telegram ularga shaxsiy xabar yuborishga ruxsat bermaydi.
 
 ## Ma’lumotlar bazasi
 
-Bot `required_channels`, `campaign_users`, `qualified_referrals`, `referral_rewards`, `gift_requests`, `campaign_prizes` va `bot_recipients` MongoDB collection’laridan foydalanadi. Mavjud botdan saqlangan kanal sozlamalari qayta ishlatiladi. Referral mukofotlari, NFT sovg‘a fondi va `campaign_users` yozuvlari kampaniyaga tegishli.
+Bot `bot_admins`, `required_channels`, `campaign_users`, `qualified_referrals`, `referral_rewards`, `gift_requests`, `campaign_prizes` va `bot_recipients` MongoDB collection’laridan foydalanadi. `campaign_prizes` NFT va Telegram Premium mukofotlarini saqlaydi. Mavjud botdan saqlangan kanal sozlamalari qayta ishlatiladi. Referral mukofotlari va `campaign_users` yozuvlari kampaniyaga tegishli.
 
 Bot tokeni va MongoDB parolini `.env` faylida saqlang va uni hech qachon ommaviy repository’ga joylamang.
 # Konkurs-bot

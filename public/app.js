@@ -19,6 +19,8 @@ const elements = {
   request: document.getElementById('request-button'),
   dialog: document.getElementById('gift-dialog'),
   dialogImage: document.getElementById('gift-dialog-image'),
+  dialogPremium: document.getElementById('gift-dialog-premium'),
+  dialogEdition: document.getElementById('gift-dialog-edition'),
   dialogName: document.getElementById('gift-dialog-name'),
   dialogModel: document.getElementById('gift-dialog-model'),
   dialogCost: document.getElementById('gift-dialog-cost'),
@@ -57,10 +59,16 @@ function selectPrize(prize) {
 }
 
 function openGiftDetails(prize) {
-  elements.dialogImage.src = prize.image_url;
+  const isPremium = prize.type === 'premium';
+  elements.dialogImage.hidden = isPremium;
+  elements.dialogPremium.hidden = !isPremium;
+  elements.dialogEdition.textContent = isPremium ? 'TELEGRAM PREMIUM' : 'DIGITAL COLLECTIBLE';
+  elements.dialogImage.src = prize.image_url || '';
   elements.dialogImage.alt = prize.display_name;
   elements.dialogName.textContent = prize.display_name;
-  elements.dialogModel.textContent = prize.model;
+  elements.dialogModel.textContent = isPremium
+    ? `Telegram Premium · ${prize.premium_months} oy`
+    : prize.model;
   elements.dialogCost.textContent = `${formatter.format(prize.referrals_cost)} referral ball`;
   const shortfall = prize.referrals_cost - campaign.referralBalance;
   elements.dialogAvailability.hidden = shortfall <= 0 && !campaign.giftRequest;
@@ -95,12 +103,12 @@ function renderGiftCatalog(prizes) {
       `Sizning ${campaign.giftRequest.prizeDisplayName} sovg‘a so‘rovingiz admin ko‘rib chiqishida. Katalogni ko‘rishingiz mumkin.`;
   } else if (hasPrizes && !prizes.some((prize) => prize.referrals_cost <= campaign.referralBalance)) {
     elements.availability.textContent =
-      'Barcha NFT sovg‘alar va narxlari quyida ko‘rinadi. Balansingiz yetganda mos sovg‘ani tanlab so‘rov yuborishingiz mumkin.';
+      'Barcha sovg‘alar va narxlari quyida ko‘rinadi. Balansingiz yetganda mos sovg‘ani tanlab so‘rov yuborishingiz mumkin.';
   } else if (hasPrizes) {
     elements.availability.textContent =
       'Narxlar referral ballarda ko‘rsatilgan. Balans yetmaydigan sovg‘alar ham katalogda qoladi.';
   } else {
-    elements.availability.textContent = 'Hozircha NFT sovg‘alar qo‘shilmagan.';
+    elements.availability.textContent = 'Hozircha sovg‘alar qo‘shilmagan.';
   }
 
   for (const prize of prizes) {
@@ -116,16 +124,20 @@ function renderGiftCatalog(prizes) {
 
     const artwork = document.createElement('span');
     artwork.className = 'gift-artwork';
-    const image = document.createElement('img');
-    image.src = prize.image_url;
-    image.alt = '';
-    image.loading = 'lazy';
-    image.decoding = 'async';
-    image.addEventListener('error', () => {
-      image.replaceWith(createTextElement('span', 'gift-media-fallback', 'NFT'));
-    }, { once: true });
-    artwork.append(image);
-    if (prize.number) {
+    if (prize.type === 'premium') {
+      artwork.append(createTextElement('span', 'gift-media-fallback premium-mark', '⭐ PREMIUM'));
+    } else {
+      const image = document.createElement('img');
+      image.src = prize.image_url;
+      image.alt = '';
+      image.loading = 'lazy';
+      image.decoding = 'async';
+      image.addEventListener('error', () => {
+        image.replaceWith(createTextElement('span', 'gift-media-fallback', 'NFT'));
+      }, { once: true });
+      artwork.append(image);
+    }
+    if (prize.type !== 'premium' && prize.number) {
       artwork.append(createTextElement('span', 'gift-edition', `#${formatter.format(Number(prize.number))}`));
     }
 
@@ -135,7 +147,9 @@ function renderGiftCatalog(prizes) {
     details.append(createTextElement(
       'span',
       'gift-type',
-      `${formatter.format(prize.referrals_cost)} referral ball`,
+      prize.type === 'premium'
+        ? `${prize.premium_months} oy Premium · ${formatter.format(prize.referrals_cost)} ball`
+        : `${formatter.format(prize.referrals_cost)} referral ball`,
     ));
     if (shortfall > 0) {
       details.append(createTextElement(
