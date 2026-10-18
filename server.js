@@ -132,6 +132,20 @@ const MESSAGE_EMOJI_IDS = {
   spend: '5226656353744862682',
   link: '5393243708361567810',
   reward: '5467403804855016559',
+  subscription: '5231354927707616568',
+  checkSubscription: '5465542769755826716',
+  home: '5273934700904211787',
+  tools: '5462921117423384478',
+  section: '5431736674147114227',
+  search: '5231012545799666522',
+  stats: '5240433578038289959',
+  requests: '5334887566804016544',
+  pending: '5213452215527677338',
+  channels: '5348096880456791703',
+  user: '5373012449597335010',
+  admins: '5219827798125846744',
+  empty: '5352896944496728039',
+  channelSection: '5388997523304112754',
 };
 const BOT_EMOJI_PATTERN = /(?:\p{Extended_Pictographic}(?:\uFE0F|\uFE0E)?\p{Emoji_Modifier}?(?:\u200D\p{Extended_Pictographic}(?:\uFE0F|\uFE0E)?\p{Emoji_Modifier}?)*)|(?:\p{Regional_Indicator}{2})|(?:[#*0-9]\uFE0F?\u20E3)/gu;
 
@@ -497,7 +511,25 @@ function addPremiumButtonIcon(button, isPremium) {
           ? MESSAGE_EMOJI_IDS.invite
           : lowerText === 'sotib olish'
             ? MESSAGE_EMOJI_IDS.spend
-            : null;
+              : lowerText.includes('obunani tekshirish')
+                ? MESSAGE_EMOJI_IDS.checkSubscription
+                : lowerText.includes('bosh menyu')
+                  ? MESSAGE_EMOJI_IDS.home
+                  : lowerText.includes('do‘stga ulashish')
+                    ? MESSAGE_EMOJI_IDS.link
+                    : lowerText.includes('referal statistikasi') || lowerText.includes('referral statistikasi')
+                      ? MESSAGE_EMOJI_IDS.stats
+                      : lowerText.includes('sovg‘a so‘rovlari')
+                        ? MESSAGE_EMOJI_IDS.requests
+                        : lowerText.includes('kutilayotgan giftlar')
+                          ? MESSAGE_EMOJI_IDS.pending
+                          : lowerText.includes('majburiy kanal obunalari')
+                            ? MESSAGE_EMOJI_IDS.channels
+                            : lowerText.includes('foydalanuvchini qidirish')
+                              ? MESSAGE_EMOJI_IDS.user
+                              : lowerText.includes('adminlarni boshqarish')
+                                ? MESSAGE_EMOJI_IDS.admins
+                                : null;
     return emojiId ? { ...button, icon_custom_emoji_id: emojiId } : button;
   }
   return {
@@ -533,15 +565,18 @@ function subscriptionKeyboard(channels) {
   const rows = channels.map((channel) => [
     urlButton(`📢 ${channel.title || channel.channel_id}`, channel.invite_url),
   ]);
-  rows.push([callbackButton('✅ Obunani tekshirish', 'subscription:check', 'success')]);
+  rows.push([callbackButton('Obunani tekshirish', 'subscription:check', 'success')]);
   return twoColumnKeyboard(rows);
 }
 
 async function showSubscriptionPrompt(ctx) {
-  await ctx.reply(
-    '🔒 Referral hisoblanishi va Mini App’dan foydalanish uchun quyidagi kanal(lar)ga obuna bo‘ling, so‘ng tekshiring.',
-    subscriptionKeyboard(await getRequiredChannels()),
+  const text = addMessageEmoji(
+    'Referral hisoblanishi va Mini App’dan foydalanish uchun quyidagi kanal(lar)ga obuna bo‘ling, so‘ng tekshiring.',
+    'Referral hisoblanishi',
+    MESSAGE_EMOJI_IDS.subscription,
+    '🅰️',
   );
+  await replyText(ctx, text, { ...subscriptionKeyboard(await getRequiredChannels()), parse_mode: 'HTML' });
 }
 
 function mainMenuKeyboard() {
@@ -1178,24 +1213,25 @@ async function handleHttpRequest(req, res) {
 
 function ownerPanelKeyboard(includeAdminManagement = false) {
   const rows = [
-    [callbackButton('📊 Referral statistikasi', 'admin:stats')],
+    [callbackButton('Referal statistikasi', 'admin:stats')],
     [callbackButton('💎 Sovg‘alar: NFT va Premium', 'admin:prizes')],
-    [callbackButton('🎁 Sovg‘a so‘rovlari', 'admin:gift_requests')],
-    [callbackButton('🎁 Kutilayotgan giftlar', 'admin:rewards')],
-    [callbackButton('📢 Majburiy obuna kanallari', 'admin:channels')],
-    [callbackButton('🔎 Foydalanuvchini qidirish', 'admin:user_search')],
+    [callbackButton('Sovg‘a so‘rovlari', 'admin:gift_requests')],
+    [callbackButton('Kutilayotgan giftlar', 'admin:rewards')],
+    [callbackButton('Majburiy kanal obunalari', 'admin:channels')],
+    [callbackButton('Foydalanuvchini qidirish', 'admin:user_search')],
   ];
-  if (includeAdminManagement) rows.push([callbackButton('👥 Adminlarni boshqarish', 'admin:admins')]);
+  if (includeAdminManagement) rows.push([callbackButton('Adminlarni boshqarish', 'admin:admins')]);
   return twoColumnKeyboard(rows);
 }
 
 async function showOwnerPanel(ctx, edit = false) {
   const keyboard = ownerPanelKeyboard(isOwner(ctx));
-  const text = '🛠️ Bot boshqaruvi\n\nBo‘limni tanlang:';
+  let text = addMessageEmoji('Bot boshqaruvi\n\nBo‘limni tanlang:', 'Bot boshqaruvi', MESSAGE_EMOJI_IDS.tools, '🛠');
+  text = addMessageEmoji(text, 'Bo‘limni tanlang:', MESSAGE_EMOJI_IDS.section, '🗂');
   if (edit && ctx.callbackQuery && ctx.callbackQuery.message) {
-    await ctx.editMessageText(text, keyboard);
+    await editText(ctx, text, { ...keyboard, parse_mode: 'HTML' });
   } else {
-    await ctx.reply(text, keyboard);
+    await replyText(ctx, text, { ...keyboard, parse_mode: 'HTML' });
   }
 }
 
@@ -1228,12 +1264,12 @@ async function renderChannels(ctx, edit = false) {
   rows.push([callbackButton('➕ Kanal qo‘shish', 'admin:channel_add', 'success')]);
   rows.push([callbackButton('⬅️ Panelga qaytish', 'admin:panel')]);
   const text = channels.length
-    ? `📢 Majburiy obuna kanallari (${channels.length}):\n${channels.map((channel) => `• ${channel.title} — ${channel.channel_id}`).join('\n')}`
-    : '📢 Majburiy obuna kanallari qo‘shilmagan.';
+    ? `${customEmojiTag(MESSAGE_EMOJI_IDS.channelSection, '🔻')} Majburiy obuna kanallari (${channels.length}):\n${channels.map((channel) => `• ${escapeHtml(channel.title)} — ${escapeHtml(channel.channel_id)}`).join('\n')}`
+    : `${customEmojiTag(MESSAGE_EMOJI_IDS.channelSection, '🔻')} Majburiy obuna kanallari qo‘shilmagan.`;
   if (edit && ctx.callbackQuery && ctx.callbackQuery.message) {
-    await ctx.editMessageText(text, twoColumnKeyboard(rows));
+    await editText(ctx, text, { ...twoColumnKeyboard(rows), parse_mode: 'HTML' });
   } else {
-    await ctx.reply(text, twoColumnKeyboard(rows));
+    await replyText(ctx, text, { ...twoColumnKeyboard(rows), parse_mode: 'HTML' });
   }
 }
 
@@ -1271,7 +1307,7 @@ async function showPendingRewards(ctx, edit = false) {
   ]);
   const text = total
     ? `🎁 NFT giftni qo‘lda topshirib, “Topshirildi” tugmasini bosing. Kutilayotgan: ${total}${total > rewards.length ? ` (birinchi ${rewards.length} tasi)` : ''}.\n\n${rewards.map((reward, index) => `${index + 1}. ${reward.first_name || 'Foydalanuvchi'}${reward.username ? ` (@${reward.username})` : ''} — ID: ${reward.user_id}\n   Sovg‘a: ${reward.prize_display_name || 'NFT hali biriktirilmagan'}`).join('\n')}`
-    : '🎁 Hozircha topshirilishi kutilayotgan gift yo‘q.';
+    : `${customEmojiTag(MESSAGE_EMOJI_IDS.empty, '📭')} Hozircha topshirilishi kutilayotgan gift yo‘q.`;
   const rows = rewards.map((reward) => [
     ...(reward.prize_telegram_url
       ? [urlButton(`💎 ${reward.prize_display_name}`, reward.prize_telegram_url)]
@@ -1280,9 +1316,12 @@ async function showPendingRewards(ctx, edit = false) {
   ]);
   rows.push([callbackButton('⬅️ Panelga qaytish', 'admin:panel')]);
   if (edit && ctx.callbackQuery && ctx.callbackQuery.message) {
-    await editText(ctx, text, twoColumnKeyboard(rows));
+    await editText(ctx, text, {
+      ...twoColumnKeyboard(rows),
+      ...(total ? {} : { parse_mode: 'HTML' }),
+    });
   } else {
-    await replyText(ctx, text, twoColumnKeyboard(rows));
+    await replyText(ctx, text, { ...twoColumnKeyboard(rows), ...(total ? {} : { parse_mode: 'HTML' }) });
   }
 }
 
@@ -1665,7 +1704,11 @@ bot.action(/^admin:(.+)$/, async (ctx) => {
   if (action === 'user_search') {
     await ctx.answerCbQuery();
     ownerSessions.set(String(ctx.from.id), { action: 'user_search' });
-    await ctx.reply('Qidirmoqchi bo‘lgan foydalanuvchining raqamli Telegram ID’sini yuboring. Bekor qilish: /cancel');
+    await replyText(
+      ctx,
+      `${customEmojiTag(MESSAGE_EMOJI_IDS.search, '🔍')} Qidirmoqchi bo‘lgan foydalanuvchining raqamli Telegram ID’sini yuboring. Bekor qilish: /cancel`,
+      { parse_mode: 'HTML' },
+    );
     return;
   }
   if (action.startsWith('user_view:')) {
