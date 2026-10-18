@@ -45,8 +45,12 @@ function createTextElement(tag, className, text) {
   return element;
 }
 
-function formatPrizeName(name, isPremium) {
-  return isPremium ? `⭐️ ${name.replace(/^(?:⭐️?\s*)+/u, '')}` : name;
+function formatPrizeName(name, isPremium, months) {
+  if (!isPremium) return name;
+  const duration = months || (/\b(\d+)\s*oy\b/i.exec(name) || [])[1];
+  return duration
+    ? `⭐️ ${duration} oylik Premium`
+    : `⭐️ ${name.replace(/^(?:⭐️?\s*)+/u, '')}`;
 }
 
 function closeGiftDialog() {
@@ -55,7 +59,7 @@ function closeGiftDialog() {
 
 function selectPrize(prize) {
   selectedPrize = prize;
-  elements.selectedName.textContent = formatPrizeName(prize.display_name, prize.type === 'premium');
+  elements.selectedName.textContent = formatPrizeName(prize.display_name, prize.type === 'premium', prize.premium_months);
   elements.selectedCost.textContent = `${formatter.format(prize.referrals_cost)} referral ball`;
   elements.selection.hidden = false;
   elements.request.hidden = false;
@@ -69,9 +73,9 @@ function openGiftDetails(prize) {
   elements.dialogEdition.textContent = isPremium ? '⭐️ TELEGRAM PREMIUM' : 'DIGITAL COLLECTIBLE';
   elements.dialogImage.src = prize.image_url || '';
   elements.dialogImage.alt = prize.display_name;
-  elements.dialogName.textContent = formatPrizeName(prize.display_name, isPremium);
+  elements.dialogName.textContent = formatPrizeName(prize.display_name, isPremium, prize.premium_months);
   elements.dialogModel.textContent = isPremium
-    ? `⭐️ Telegram Premium · ${prize.premium_months} oy`
+    ? `⭐️ ${prize.premium_months} oylik Premium`
     : prize.model;
   elements.dialogCost.textContent = `${formatter.format(prize.referrals_cost)} referral ball`;
   const shortfall = prize.referrals_cost - campaign.referralBalance;
@@ -123,7 +127,7 @@ function renderGiftCatalog(prizes) {
     card.type = 'button';
     card.setAttribute(
       'aria-label',
-      `${formatPrizeName(prize.display_name, prize.type === 'premium')}, ${formatter.format(prize.referrals_cost)} referral ball${shortfall > 0 ? `, yana ${formatter.format(shortfall)} ball kerak` : ''}. Tafsilotlarni ochish`,
+      `${formatPrizeName(prize.display_name, prize.type === 'premium', prize.premium_months)}, ${formatter.format(prize.referrals_cost)} referral ball${shortfall > 0 ? `, yana ${formatter.format(shortfall)} ball kerak` : ''}. Tafsilotlarni ochish`,
     );
     card.addEventListener('click', () => openGiftDetails(prize));
 
@@ -148,12 +152,12 @@ function renderGiftCatalog(prizes) {
 
     const details = document.createElement('span');
     details.className = 'gift-details';
-    details.append(createTextElement('span', 'gift-name', formatPrizeName(prize.display_name, prize.type === 'premium')));
+    details.append(createTextElement('span', 'gift-name', formatPrizeName(prize.display_name, prize.type === 'premium', prize.premium_months)));
     details.append(createTextElement(
       'span',
       'gift-type',
       prize.type === 'premium'
-        ? `⭐️ ${prize.premium_months} oy Premium · ${formatter.format(prize.referrals_cost)} ball`
+        ? `⭐️ ${prize.premium_months} oylik Premium · ${formatter.format(prize.referrals_cost)} ball`
         : `${formatter.format(prize.referrals_cost)} referral ball`,
     ));
     if (shortfall > 0) {

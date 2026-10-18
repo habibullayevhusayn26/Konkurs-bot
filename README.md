@@ -48,8 +48,10 @@ Katalogdagi sovg‘a uchun so‘rovlar soni cheklanmagan; bir xil katalog sovg�
 Bot egasi yoki qo‘shimcha admin shaxsiy chatda `/admin` yuboradi:
 
 - **Referral statistikasi** — foydalanuvchilar, tasdiqlangan takliflar va kutilayotgan so‘rovlar.
+- **Ommaviy xabar** — Telegram’da formatlab yuborilgan matn yoki rasm, GIF, video, audio va boshqa media fayllarni foydalanuvchilarga tarqating. Ixtiyoriy inline tugmalarga havola, botning `/start`, `/help`, `/balance`, `/invite`, `/prizes`, `/bonus` buyruqlaridan biri yoki qalqib chiquvchi xabar belgilanadi; har bir tugmaning ko‘k, yashil yoki qizil rangini tanlash va premium emoji belgisini qo‘shish mumkin. Yuborishdan oldin auditoriya soni ko‘rsatiladi va admin tasdiqlaydi.
 - **NFT sovg‘alarini boshqarish** — haqiqiy NFT havolasini va ball narxini qo‘shish yoki katalogdan olib tashlash.
 - **Sovg‘a so‘rovlari** — foydalanuvchi so‘rovini qabul qilish yoki rad etish. So‘rov xabari barcha adminlarga bot orqali yuboriladi.
+- **Foydalanuvchini qidirish** — Telegram ID orqali foydalanuvchini topib, uning referral balansiga ball qo‘shish yoki yetarli balans bo‘lsa ayirish mumkin.
 - **Telegram Premium sovg‘asi** — 1, 3, 6 yoki 12 oylik Premium mukofot qo‘shib, referral ball narxini belgilang. Tasdiqlangan Premium so‘rovini admin Telegram orqali qo‘lda sovg‘a qiladi.
 - **Majburiy obuna kanallari** — kanal qo‘shish, tahrirlash yoki o‘chirish. Obunani tekshirish uchun bot kanal administratori bo‘lishi kerak.
 - **Bonuslar va promokodlar** — bonus uchun alohida kanal ulash, promokod beradigan ball va foydalanish limitini belgilash. Yaratilgan kod bonus kanaliga user botni ochib kodni avtomatik faollashtiradigan inline tugma bilan yuboriladi. Bot bonus kanalida administrator bo‘lishi kerak.
@@ -60,7 +62,7 @@ Qo‘shimcha adminlar bot egasining `/admin` panelidan boshqariladi; ular botni 
 
 ## Ma’lumotlar bazasi
 
-Bot `bot_admins`, `blocked_users`, `required_channels`, `bonus_settings`, `bonus_promos`, `bonus_promo_redemptions`, `campaign_users`, `qualified_referrals`, `referral_rewards`, `gift_requests`, `campaign_prizes`, `purchase_orders` va `bot_recipients` MongoDB collection’laridan foydalanadi. `campaign_users` bonus ballari va bonus olish vaqtlarini saqlaydi; `bonus_promos` limitli promokodlarni, `bonus_promo_redemptions` esa foydalangan userlarni saqlaydi. `purchase_orders` pulli Premium xaridlarining to‘lov va topshirish holatini saqlaydi. Referral mukofotlari va `campaign_users` yozuvlari kampaniyaga tegishli.
+Bot `bot_admins`, `blocked_users`, `required_channels`, `bonus_settings`, `bonus_promos`, `bonus_promo_redemptions`, `campaign_users`, `qualified_referrals`, `referral_rewards`, `gift_requests`, `campaign_prizes`, `purchase_orders` va `bot_recipients` MongoDB collection’laridan foydalanadi. `campaign_users` bonus ballari, admin tomonidan qo‘lda kiritilgan balans tuzatishi va bonus olish vaqtlarini saqlaydi; `bonus_promos` limitli promokodlarni, `bonus_promo_redemptions` esa foydalangan userlarni saqlaydi. `purchase_orders` pulli Premium xaridlarining to‘lov va topshirish holatini saqlaydi. Referral mukofotlari va `campaign_users` yozuvlari kampaniyaga tegishli.
 
 Bot tokeni va MongoDB parolini `.env` faylida saqlang va uni hech qachon ommaviy repository’ga joylamang.
 # Konkurs-bot

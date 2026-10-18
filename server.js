@@ -63,6 +63,7 @@ async function initializeDatabase() {
     giftRequests: database.collection('gift_requests'),
     purchases: database.collection('purchase_orders'),
     previousRecipients: database.collection('bot_recipients'),
+    broadcastButtons: database.collection('broadcast_buttons'),
   };
   await collections.referrals.createIndex({ inviter_id: 1 });
   await collections.rewards.createIndex({ status: 1, created_at: 1 });
@@ -262,7 +263,6 @@ async function isSubscribedToRequiredChannels(userId) {
   }
   return true;
 }
-
 async function saveRequiredChannel(channel) {
   await collections.channels.updateOne(
     { _id: channel.channel_id },
@@ -352,20 +352,66 @@ async function saveBonusChannel(ctx, rawText) {
   );
 }
 
+async function markPromoPostExhausted(promoId) {
+  const now = new Date();
+  const promo = await collections.promos.findOneAndUpdate(
+    {
+      _id: promoId,
+      channel_message_id: { $exists: true },
+      $expr: { $gte: ['$used_count', '$max_uses'] },
+      $or: [
+        { completion_posted_at: { $exists: false }, completion_editing_at: { $exists: false } },
+        { completion_editing_at: { $lte: new Date(now.getTime() - 2 * 60 * 1000) } },
+      ],
+    },
+    { $set: { active: false, completion_editing_at: now } },
+    { returnDocument: 'after', includeResultMetadata: false },
+  );
+  if (!promo) return;
+  const postText = `${promo.post_text}\n\n${customEmojiTag(MESSAGE_EMOJI_IDS.checkSubscription, '✅')} <b>PROMOKOD ISHLATILDI</b>`;
+  try {
+    await bot.telegram.editMessageText(
+      promo.channel_id,
+      promo.channel_message_id,
+      undefined,
+      postText,
+      { parse_mode: 'HTML', reply_markup: { inline_keyboard: [] } },
+    );
+    await collections.promos.updateOne(
+      { _id: promoId, completion_editing_at: now },
+      { $set: { completion_posted_at: new Date() }, $unset: { completion_editing_at: '' } },
+    );
+  } catch (error) {
+    await collections.promos.updateOne(
+      { _id: promoId, completion_editing_at: now },
+      { $unset: { completion_editing_at: '' }, $set: { completion_edit_error: error.message } },
+    );
+    console.error(`Could not mark exhausted promo ${promoId} in its channel post:`, error);
+  }
+}
+
 async function redeemPromo(user, promoId) {
   const userId = String(user.id);
   await ensureCampaignUser(user);
-  const promo = await collections.promos.findOne({ _id: promoId, active: true });
+  const promo = await collections.promos.findOne({ _id: promoId });
   if (!promo) return { status: 'unavailable' };
+  if (!promo.active && promo.used_count >= promo.max_uses) {
+    await markPromoPostExhausted(promoId);
+    return { status: 'exhausted' };
+  }
   const redemptionId = `${promoId}:${userId}`;
   let redemption = await collections.promoRedemptions.findOne({ _id: redemptionId });
 
   if (!redemption) {
+    if (!promo.active) return { status: promo.used_count >= promo.max_uses ? 'exhausted' : 'unavailable' };
     const reservation = await collections.promos.updateOne(
       { _id: promoId, active: true, $expr: { $lt: ['$used_count', '$max_uses'] } },
       { $inc: { used_count: 1 } },
     );
-    if (!reservation.modifiedCount) return { status: 'exhausted' };
+    if (!reservation.modifiedCount) {
+      await markPromoPostExhausted(promoId);
+      return { status: 'exhausted' };
+    }
     try {
       await collections.promoRedemptions.insertOne({
         _id: redemptionId,
@@ -401,6 +447,7 @@ async function redeemPromo(user, promoId) {
       { _id: redemptionId },
       { $set: { status: 'awarded', awarded_at: new Date() } },
     );
+    await markPromoPostExhausted(promoId);
     return { status: 'already_redeemed' };
   }
   const credit = await collections.campaignUsers.updateOne(
@@ -414,6 +461,7 @@ async function redeemPromo(user, promoId) {
         { _id: redemptionId },
         { $set: { status: 'awarded', awarded_at: new Date() } },
       );
+      await markPromoPostExhausted(promoId);
       return { status: 'already_redeemed' };
     }
     throw new Error(`Could not credit promo ${promoId} to user ${userId}.`);
@@ -422,6 +470,7 @@ async function redeemPromo(user, promoId) {
     { _id: redemptionId },
     { $set: { status: 'awarded', awarded_at: new Date() } },
   );
+  await markPromoPostExhausted(promoId);
   return { status: 'awarded', points: redemption.points };
 }
 
@@ -737,7 +786,13 @@ async function getCampaignStats(userId) {
   ]);
   const spentReferrals = acceptedRequests.reduce((total, request) => total + request.referrals_cost, 0)
     + (pendingRequest ? pendingRequest.referrals_cost : 0);
-  const referralBalance = Math.max(0, referralCount + (profile && profile.bonus_points || 0) - spentReferrals);
+  const referralBalance = Math.max(
+    0,
+    referralCount
+      + (profile && profile.bonus_points || 0)
+      + (profile && profile.admin_balance_adjustment || 0)
+      - spentReferrals,
+  );
   const botLink = `https://t.me/${botUsername}?start=ref_${userId}`;
   return {
     firstName: profile ? profile.first_name : '',
@@ -758,7 +813,7 @@ function prizeCallbackCode(prizeId) {
 }
 
 function prizeTypeLabel(prize) {
-  return prize.type === 'premium' ? `Telegram Premium (${prize.premium_months} oy)` : `NFT ${prize.display_name}`;
+  return prize.type === 'premium' ? `${prize.premium_months} oylik Premium` : `NFT ${prize.display_name}`;
 }
 
 async function createGiftRequest(telegramUser, prizeId) {
@@ -783,6 +838,7 @@ async function createGiftRequest(telegramUser, prizeId) {
     0,
     referralCount
       + (profile && profile.bonus_points || 0)
+      + (profile && profile.admin_balance_adjustment || 0)
       - previousRequests.reduce((total, request) => total + request.referrals_cost, 0),
   );
   const prize = await collections.prizes.findOne({ _id: prizeId, active: true });
@@ -950,7 +1006,7 @@ async function showPrizeMenu(ctx) {
 
 async function showPurchaseMenu(ctx, edit = false) {
   const rows = [...PREMIUM_PURCHASES.entries()].map(([months, starCount]) => [
-    callbackButton(`Telegram Premium · ${months} oy · ${starCount} Stars`, `purchase:premium:${months}`, 'success'),
+    callbackButton(`${months} oylik Premium · ${starCount} Stars`, `purchase:premium:${months}`, 'success'),
   ]);
   rows.push([callbackButton('Bosh menyu', 'menu:home')]);
   const keyboard = Markup.inlineKeyboard(rows.flat(), { columns: 1 });
@@ -1173,7 +1229,10 @@ async function renderCampaignUser(ctx, userId, edit = false) {
     .filter((request) => request.status === 'approved' || request.status === 'pending')
     .reduce((total, request) => total + (Number.isSafeInteger(request.referrals_cost) ? request.referrals_cost : 0), 0);
   const bonusPoints = profile && Number.isSafeInteger(profile.bonus_points) ? profile.bonus_points : 0;
-  const referralBalance = Math.max(0, referrals + bonusPoints - referralSpent);
+  const adminBalanceAdjustment = profile && Number.isSafeInteger(profile.admin_balance_adjustment)
+    ? profile.admin_balance_adjustment
+    : 0;
+  const referralBalance = Math.max(0, referrals + bonusPoints + adminBalanceAdjustment - referralSpent);
   let referredByText = 'Yo‘q';
   if (profile && profile.referred_by) {
     const referrer = await collections.campaignUsers.findOne({ _id: profile.referred_by });
@@ -1208,11 +1267,18 @@ async function renderCampaignUser(ctx, userId, edit = false) {
     `Taklif qilgan: ${referredByText}`,
     `Takliflari: ${referrals}`,
     `Bonus ballari: ${bonusPoints}`,
+    `Admin balans tuzatishi: ${adminBalanceAdjustment}`,
     `Referral balansi: ${referralBalance}`,
     `So‘nggi sovg‘a so‘rovlari:\n${requestText}`,
     `Eski mukofotlar:\n${rewardText}`,
   ].join('\n');
   const rows = [];
+  if (profile) {
+    rows.push([
+      callbackButton('➕ Balans qo‘shish', `admin:user_balance_add:${userId}`, 'success'),
+      callbackButton('➖ Balans ayirish', `admin:user_balance_subtract:${userId}`, 'danger'),
+    ]);
+  }
   if (!protectedAdmin) {
     rows.push([callbackButton(
       blocked ? '✅ Blokdan chiqarish' : '🚫 Foydalanuvchini bloklash',
@@ -1403,6 +1469,7 @@ async function handleHttpRequest(req, res) {
 function ownerPanelKeyboard(includeAdminManagement = false) {
   const rows = [
     [callbackButton('Referal statistikasi', 'admin:stats')],
+    [callbackButton('📣 Foydalanuvchilarga xabar yuborish', 'admin:broadcast', 'success')],
     [callbackButton('💎 Sovg‘alar: NFT va Premium', 'admin:prizes')],
     [callbackButton('Sovg‘a so‘rovlari', 'admin:gift_requests')],
     [callbackButton('Kutilayotgan giftlar', 'admin:rewards')],
@@ -1423,6 +1490,204 @@ async function showOwnerPanel(ctx, edit = false) {
   } else {
     await replyText(ctx, text, { ...keyboard, parse_mode: 'HTML' });
   }
+}
+
+function broadcastOptionsKeyboard(buttonCount) {
+  const rows = [];
+  if (buttonCount < 10) {
+    rows.push([callbackButton('➕ Inline tugma qo‘shish', 'broadcast:add', 'success')]);
+  }
+  rows.push([callbackButton('✅ Tugmalarni yakunlash', 'broadcast:finish')]);
+  rows.push([callbackButton('❌ Bekor qilish', 'broadcast:cancel', 'danger')]);
+  return Markup.inlineKeyboard(rows);
+}
+
+function broadcastButtonTypeKeyboard() {
+  return Markup.inlineKeyboard([
+    [callbackButton('🔗 Havola', 'broadcast:type:url')],
+    [callbackButton('⚡ Bot buyrug‘i', 'broadcast:type:command')],
+    [callbackButton('💬 Qalqib chiquvchi oyna', 'broadcast:type:alert')],
+    [callbackButton('❌ Bekor qilish', 'broadcast:cancel', 'danger')],
+  ]);
+}
+
+function broadcastCommandKeyboard() {
+  return Markup.inlineKeyboard([
+    [callbackButton('/start', 'broadcast:command:start')],
+    [callbackButton('/help', 'broadcast:command:help')],
+    [callbackButton('/balance', 'broadcast:command:balance')],
+    [callbackButton('/invite', 'broadcast:command:invite')],
+    [callbackButton('/prizes', 'broadcast:command:prizes')],
+    [callbackButton('/bonus', 'broadcast:command:bonus')],
+    [callbackButton('❌ Bekor qilish', 'broadcast:cancel', 'danger')],
+  ]);
+}
+
+function broadcastButtonStyleKeyboard() {
+  return Markup.inlineKeyboard([[
+    callbackButton('🔵 Ko‘k', 'broadcast:style:primary', 'primary'),
+    callbackButton('🟢 Yashil', 'broadcast:style:success', 'success'),
+    callbackButton('🔴 Qizil', 'broadcast:style:danger', 'danger'),
+  ]]);
+}
+
+function hasBroadcastContent(message) {
+  return Boolean(message.text || message.caption || message.photo || message.video
+    || message.animation || message.document || message.audio || message.voice
+    || message.video_note || message.sticker);
+}
+
+function isBroadcastUrl(value) {
+  try {
+    const url = new URL(value);
+    return ['https:', 'http:', 'tg:'].includes(url.protocol)
+      && !url.username
+      && !url.password;
+  } catch {
+    return false;
+  }
+}
+
+function makeBroadcastButton(text, entities = []) {
+  const customEmoji = entities.find((entity) => entity.type === 'custom_emoji');
+  const label = customEmoji ? stripBotEmojis(text).trim() : text.trim();
+  if (!label || Array.from(label).length > 64 || /[\r\n]/.test(label)) {
+    throw new Error('Tugma nomi 1–64 ta belgidan iborat bo‘lsin.');
+  }
+  return {
+    text: label,
+    ...(customEmoji ? { icon_custom_emoji_id: customEmoji.custom_emoji_id } : {}),
+  };
+}
+
+async function deliverBroadcast(ctx, session) {
+  const adminId = String(ctx.from.id);
+  const blockedUsers = await collections.blockedUsers.find().project({ _id: 1 }).toArray();
+  const blockedIds = new Set(blockedUsers.map((user) => user._id));
+  const total = await collections.campaignUsers.countDocuments({
+    _id: { $nin: [...blockedIds] },
+  });
+  if (!total) {
+    ownerSessions.delete(adminId);
+    await ctx.reply('Xabar yuboriladigan foydalanuvchi topilmadi.');
+    return;
+  }
+
+  const callbackButtons = session.buttons.filter((button) => button.type !== 'url');
+  let callbackIds = [];
+  if (callbackButtons.length) {
+    const records = callbackButtons.map((button) => ({
+      _id: crypto.randomBytes(12).toString('hex'),
+      action: button.type,
+      value: button.target,
+      created_by: adminId,
+      created_at: new Date(),
+    }));
+    await collections.broadcastButtons.insertMany(records);
+    callbackIds = records.map((record) => record._id);
+  }
+
+  let callbackIndex = 0;
+  const rows = session.buttons.map((button) => {
+    const textButton = button.icon_custom_emoji_id
+      ? { text: button.text, icon_custom_emoji_id: button.icon_custom_emoji_id }
+      : { text: button.text };
+    const styled = { ...textButton, style: button.style };
+    if (button.type === 'url') return [{ ...styled, url: button.target }];
+    const callbackData = `bc:${callbackIds[callbackIndex]}`;
+    callbackIndex += 1;
+    return [{ ...styled, callback_data: callbackData }];
+  });
+  const extra = rows.length ? { reply_markup: { inline_keyboard: rows } } : {};
+
+  let sent = 0;
+  let failed = 0;
+  let firstFailure = '';
+  ownerSessions.delete(adminId);
+  await ctx.reply(`Xabar ${total} ta foydalanuvchiga yuborilmoqda…`);
+  const users = collections.campaignUsers.find({ _id: { $nin: [...blockedIds] } }).project({ _id: 1 });
+  for await (const user of users) {
+    const recipientId = Number(user._id);
+    if (!Number.isSafeInteger(recipientId) || recipientId < 1) {
+      failed += 1;
+      firstFailure ||= `Telegram ID noto‘g‘ri: ${user._id}`;
+      continue;
+    }
+    try {
+      await bot.telegram.copyMessage(recipientId, session.sourceChatId, session.sourceMessageId, extra);
+      sent += 1;
+    } catch (error) {
+      failed += 1;
+      firstFailure ||= error.description || error.message || 'Telegram xatosi';
+    }
+    await new Promise((resolve) => setTimeout(resolve, 40));
+  }
+  if (failed) {
+    console.error(`Broadcast by admin ${adminId} finished with ${failed} delivery failure(s). First failure: ${firstFailure}`);
+  }
+  await ctx.reply(
+    `Ommaviy xabar yakunlandi.\n\n✅ Yuborildi: ${sent}\n⚠️ Yetkazilmadi: ${failed}${failed ? `\nBirinchi xato: ${firstFailure.slice(0, 180)}` : ''}`,
+  );
+}
+
+async function handleBroadcastAdminInput(ctx, session) {
+  const adminId = String(ctx.from.id);
+  const message = ctx.message;
+  if (session.action === 'broadcast_content') {
+    if (!hasBroadcastContent(message)) {
+      await ctx.reply('Matn, rasm, GIF, video, audio, voice yoki fayl xabarini yuboring. Formatlash Telegram’dan saqlanadi. Bekor qilish: /cancel');
+      return true;
+    }
+    ownerSessions.set(adminId, {
+      action: 'broadcast_options',
+      sourceChatId: ctx.chat.id,
+      sourceMessageId: message.message_id,
+      buttons: [],
+    });
+    await ctx.reply(
+      'Xabar qabul qilindi. Inline tugmalar qo‘shishingiz yoki tugmalarsiz yuborishingiz mumkin.',
+      broadcastOptionsKeyboard(0),
+    );
+    return true;
+  }
+  if (session.action === 'broadcast_button_text') {
+    if (!message.text) {
+      await ctx.reply('Tugma nomini matn ko‘rinishida yuboring yoki /cancel yozing.');
+      return true;
+    }
+    try {
+      ownerSessions.set(adminId, {
+        ...session,
+        action: 'broadcast_button_type',
+        button: makeBroadcastButton(message.text, message.entities || []),
+      });
+      await ctx.reply('Tugma qanday ishlasin?', broadcastButtonTypeKeyboard());
+    } catch (error) {
+      await ctx.reply(`${error.message} Qaytadan yuboring yoki /cancel yozing.`);
+    }
+    return true;
+  }
+  if (session.action === 'broadcast_button_url') {
+    const url = (message.text || '').trim();
+    if (!isBroadcastUrl(url)) {
+      await ctx.reply('HTTPS, HTTP yoki Telegram havolasini yuboring. Masalan: https://example.com');
+      return true;
+    }
+    ownerSessions.set(adminId, { ...session, action: 'broadcast_button_style', button: { ...session.button, type: 'url', target: url } });
+    await ctx.reply('Tugma rangini tanlang:', broadcastButtonStyleKeyboard());
+    return true;
+  }
+  if (session.action === 'broadcast_button_alert') {
+    const alertText = (message.text || '').trim();
+    if (!alertText || Array.from(alertText).length > 200) {
+      await ctx.reply('Qalqib chiquvchi oynaning matni 1–200 ta belgidan iborat bo‘lsin.');
+      return true;
+    }
+    ownerSessions.set(adminId, { ...session, action: 'broadcast_button_style', button: { ...session.button, type: 'alert', target: alertText } });
+    await ctx.reply('Tugma rangini tanlang:', broadcastButtonStyleKeyboard());
+    return true;
+  }
+  return false;
 }
 
 async function renderAdmins(ctx, edit = false) {
@@ -1549,6 +1814,9 @@ async function handleAdminInput(ctx) {
     await showOwnerPanel(ctx);
     return true;
   }
+  if (session.action.startsWith('broadcast_')) {
+    return handleBroadcastAdminInput(ctx, session);
+  }
   if (session.action === 'bonus_channel_set') {
     try {
       await saveBonusChannel(ctx, text);
@@ -1605,6 +1873,7 @@ async function handleAdminInput(ctx) {
       active: true,
       created_at: new Date(),
       created_by: adminId,
+      channel_id: settings.channel_id,
     };
     try {
       await collections.promos.insertOne(promo);
@@ -1618,6 +1887,10 @@ async function handleAdminInput(ctx) {
       + `Kod: <code>${escapeHtml(promo.code)}</code>\n`
       + `Bonus: ${promo.points} ball\n`
       + `Foydalanish limiti: ${promo.max_uses} ta user`;
+    await collections.promos.updateOne(
+      { _id: promo._id },
+      { $set: { post_text: postText } },
+    );
     let post;
     try {
       post = await bot.telegram.sendMessage(
@@ -1766,6 +2039,66 @@ async function handleAdminInput(ctx) {
     await renderCampaignUser(ctx, String(Number(userId)));
     return true;
   }
+  if (session.action === 'user_balance_adjust') {
+    const amount = Number(text.trim());
+    if (!Number.isSafeInteger(amount) || amount < 1 || amount > 1000000) {
+      await ctx.reply('Ball miqdori 1 dan 1 000 000 gacha bo‘lgan butun son bo‘lishi kerak. Qayta kiriting yoki /cancel yozing.');
+      return true;
+    }
+    const { userId, operation } = session;
+    let result;
+    if (operation === 'add') {
+      result = await collections.campaignUsers.updateOne(
+        { _id: userId },
+        { $inc: { admin_balance_adjustment: amount } },
+      );
+    } else {
+      const [profile, referrals, requests] = await Promise.all([
+        collections.campaignUsers.findOne({ _id: userId }),
+        collections.referrals.countDocuments({ inviter_id: userId }),
+        collections.giftRequests.find({
+          user_id: userId,
+          status: { $in: ['approved', 'pending'] },
+        }).project({ referrals_cost: 1 }).toArray(),
+      ]);
+      if (!profile) {
+        ownerSessions.delete(adminId);
+        await ctx.reply('Foydalanuvchi botda qayd etilmagan.');
+        return true;
+      }
+      const referralSpent = requests.reduce(
+        (total, request) => total + (Number.isSafeInteger(request.referrals_cost) ? request.referrals_cost : 0),
+        0,
+      );
+      const baseBalance = referrals
+        + (Number.isSafeInteger(profile.bonus_points) ? profile.bonus_points : 0)
+        - referralSpent;
+      result = await collections.campaignUsers.updateOne(
+        {
+          _id: userId,
+          $expr: {
+            $gte: [
+              { $add: [baseBalance, { $ifNull: ['$admin_balance_adjustment', 0] }] },
+              amount,
+            ],
+          },
+        },
+        { $inc: { admin_balance_adjustment: -amount } },
+      );
+    }
+    ownerSessions.delete(adminId);
+    if (!result.modifiedCount) {
+      await ctx.reply(operation === 'subtract'
+        ? 'Ayirish uchun foydalanuvchining yetarli referral balansi yo‘q.'
+        : 'Balansni yangilab bo‘lmadi: foydalanuvchi topilmadi.');
+    } else {
+      await ctx.reply(operation === 'add'
+        ? `✅ Foydalanuvchi balansiga ${amount} ball qo‘shildi.`
+        : `✅ Foydalanuvchi balansidan ${amount} ball ayirildi.`);
+    }
+    await renderCampaignUser(ctx, userId);
+    return true;
+  }
   if (session.action === 'channel_add' || session.action === 'channel_edit') {
     try {
       await saveChannelFromOwner(ctx, text, session.channelId);
@@ -1806,7 +2139,8 @@ bot.use(async (ctx, next) => {
   }
   const adminId = String(ctx.from.id);
   const admin = await isAdmin(ctx);
-  if (admin && ctx.message && ctx.message.text && ownerSessions.has(adminId)) {
+  if (admin && ctx.message && ownerSessions.has(adminId)
+    && (ctx.message.text || ownerSessions.get(adminId).action === 'broadcast_content')) {
     if (await handleAdminInput(ctx)) return;
   }
 
@@ -2065,6 +2399,139 @@ bot.command('admin', async (ctx) => {
   await showOwnerPanel(ctx);
 });
 
+bot.action(/^broadcast:(.+)$/, async (ctx) => {
+  if (!await isAdmin(ctx)) {
+    await ctx.answerCbQuery('⛔ Bu amal faqat bot adminlari uchun.', { show_alert: true });
+    return;
+  }
+  const adminId = String(ctx.from.id);
+  const action = ctx.match[1];
+  if (action === 'cancel') {
+    ownerSessions.delete(adminId);
+    await ctx.answerCbQuery('Xabar yuborish bekor qilindi.');
+    await showOwnerPanel(ctx);
+    return;
+  }
+  const session = ownerSessions.get(adminId);
+  if (!session) {
+    await ctx.answerCbQuery('Xabar yuborish sessiyasi topilmadi. Paneldan qayta boshlang.', { show_alert: true });
+    return;
+  }
+  if (action === 'add' && session.action === 'broadcast_options') {
+    ownerSessions.set(adminId, { ...session, action: 'broadcast_button_text' });
+    await ctx.answerCbQuery();
+    await ctx.reply('Tugma nomini yuboring. Premium emoji ishlatsangiz, Telegram uni tugma belgisi sifatida qo‘shadi. /cancel');
+    return;
+  }
+  if (action.startsWith('type:') && session.action === 'broadcast_button_type') {
+    const type = action.slice('type:'.length);
+    if (type === 'url') {
+      ownerSessions.set(adminId, { ...session, action: 'broadcast_button_url' });
+      await ctx.answerCbQuery();
+      await ctx.reply('Tugma ochadigan HTTPS, HTTP yoki Telegram havolasini yuboring. /cancel');
+      return;
+    }
+    if (type === 'command') {
+      ownerSessions.set(adminId, { ...session, action: 'broadcast_button_command' });
+      await ctx.answerCbQuery();
+      await ctx.reply('Tugma bosilganda bot qaysi buyrug‘ini bajarsin?', broadcastCommandKeyboard());
+      return;
+    }
+    if (type === 'alert') {
+      ownerSessions.set(adminId, { ...session, action: 'broadcast_button_alert' });
+      await ctx.answerCbQuery();
+      await ctx.reply('Tugma bosilganda ko‘rsatiladigan qalqib chiquvchi matnni yuboring (1–200 belgi). /cancel');
+      return;
+    }
+  }
+  if (action.startsWith('command:') && session.action === 'broadcast_button_command') {
+    const command = action.slice('command:'.length);
+    if (!['start', 'help', 'balance', 'invite', 'prizes', 'bonus'].includes(command)) {
+      await ctx.answerCbQuery('Bu buyruq qo‘llab-quvvatlanmaydi.', { show_alert: true });
+      return;
+    }
+    ownerSessions.set(adminId, {
+      ...session,
+      action: 'broadcast_button_style',
+      button: { ...session.button, type: 'command', target: `/${command}` },
+    });
+    await ctx.answerCbQuery();
+    await ctx.reply('Tugma rangini tanlang:', broadcastButtonStyleKeyboard());
+    return;
+  }
+  if (action.startsWith('style:') && session.action === 'broadcast_button_style') {
+    const style = action.slice('style:'.length);
+    if (!['primary', 'success', 'danger'].includes(style)) {
+      await ctx.answerCbQuery('Tugma rangi noto‘g‘ri.', { show_alert: true });
+      return;
+    }
+    const buttons = [...session.buttons, { ...session.button, style }];
+    ownerSessions.set(adminId, { action: 'broadcast_options', sourceChatId: session.sourceChatId, sourceMessageId: session.sourceMessageId, buttons });
+    await ctx.answerCbQuery('Tugma qo‘shildi.');
+    await ctx.reply(`Inline tugmalar sozlandi: ${buttons.length}/10. Yana tugma qo‘shing yoki yuborishni yakunlang.`, broadcastOptionsKeyboard(buttons.length));
+    return;
+  }
+  if (action === 'finish' && session.action === 'broadcast_options') {
+    ownerSessions.set(adminId, { ...session, action: 'broadcast_confirm' });
+    const blockedUsers = await collections.blockedUsers.find().project({ _id: 1 }).toArray();
+    const recipientCount = await collections.campaignUsers.countDocuments({
+      _id: { $nin: blockedUsers.map((user) => user._id) },
+    });
+    await ctx.answerCbQuery();
+    await ctx.reply(
+      `Ommaviy xabarni ${recipientCount} ta foydalanuvchiga yuborishga tayyormisiz?${session.buttons.length ? `\nInline tugmalar: ${session.buttons.length}` : '\nInline tugmalar: yo‘q'}`,
+      Markup.inlineKeyboard([[
+        callbackButton('✅ Tasdiqlab yuborish', 'broadcast:send', 'success'),
+        callbackButton('❌ Bekor qilish', 'broadcast:cancel', 'danger'),
+      ]]),
+    );
+    return;
+  }
+  if (action === 'send' && session.action === 'broadcast_confirm') {
+    ownerSessions.delete(adminId);
+    await ctx.answerCbQuery('Xabar yuborish boshlandi.');
+    try {
+      await deliverBroadcast(ctx, session);
+    } catch (error) {
+      console.error(`Broadcast by admin ${adminId} could not be completed:`, error);
+      await ctx.reply(`Xabar yuborish jarayonida xatolik yuz berdi: ${error.message}`);
+    }
+    return;
+  }
+  await ctx.answerCbQuery('Bu amal hozir mavjud emas. Jarayonni /cancel bilan bekor qilib qayta boshlang.', { show_alert: true });
+});
+
+bot.action(/^bc:([a-f0-9]{24})$/, async (ctx) => {
+  const button = await collections.broadcastButtons.findOne({ _id: ctx.match[1] });
+  if (!button) {
+    await ctx.answerCbQuery('Bu tugma amali endi mavjud emas.', { show_alert: true });
+    return;
+  }
+  if (button.action === 'alert') {
+    await ctx.answerCbQuery(button.value, { show_alert: true });
+    return;
+  }
+  const commands = {
+    '/start': () => showWelcome(ctx),
+    '/help': () => replyText(
+      ctx,
+      'Botda /balance orqali ballaringizni ko‘ring, /invite orqali taklif havolasini oling, /prizes orqali mukofotlarni ko‘ring va /bonus orqali bonuslarni oling. Yoki quyidagi menyudan foydalaning:',
+      mainMenuKeyboard(),
+    ),
+    '/balance': () => showBalance(ctx),
+    '/invite': () => showInviteLink(ctx),
+    '/prizes': () => showPrizeMenu(ctx),
+    '/bonus': () => showBonusMenu(ctx),
+  };
+  const runCommand = commands[button.value];
+  if (!runCommand) {
+    await ctx.answerCbQuery('Bu buyruq endi qo‘llab-quvvatlanmaydi.', { show_alert: true });
+    return;
+  }
+  await ctx.answerCbQuery();
+  await runCommand();
+});
+
 bot.action('subscription:check', async (ctx) => {
   try {
     const subscribed = await isSubscribedToRequiredChannels(ctx.from.id);
@@ -2125,6 +2592,29 @@ bot.action(/^admin:(.+)$/, async (ctx) => {
     await renderCampaignUser(ctx, normalizedUserId, true);
     return;
   }
+  if (action.startsWith('user_balance_add:') || action.startsWith('user_balance_subtract:')) {
+    const shouldAdd = action.startsWith('user_balance_add:');
+    const userId = action.slice(shouldAdd ? 'user_balance_add:'.length : 'user_balance_subtract:'.length);
+    if (!/^\d{1,20}$/.test(userId) || !Number.isSafeInteger(Number(userId)) || Number(userId) < 1) {
+      await ctx.answerCbQuery('Telegram ID noto‘g‘ri.', { show_alert: true });
+      return;
+    }
+    const normalizedUserId = String(Number(userId));
+    if (!await collections.campaignUsers.findOne({ _id: normalizedUserId })) {
+      await ctx.answerCbQuery('Foydalanuvchi botda qayd etilmagan.', { show_alert: true });
+      return;
+    }
+    await ctx.answerCbQuery();
+    ownerSessions.set(String(ctx.from.id), {
+      action: 'user_balance_adjust',
+      userId: normalizedUserId,
+      operation: shouldAdd ? 'add' : 'subtract',
+    });
+    await ctx.reply(
+      `${shouldAdd ? 'Qo‘shiladigan' : 'Ayiriladigan'} referral ball miqdorini yuboring (1–1 000 000). Bekor qilish: /cancel`,
+    );
+    return;
+  }
   if (action.startsWith('user_block:') || action.startsWith('user_unblock:')) {
     const shouldBlock = action.startsWith('user_block:');
     const userId = action.slice(shouldBlock ? 'user_block:'.length : 'user_unblock:'.length);
@@ -2155,6 +2645,11 @@ bot.action(/^admin:(.+)$/, async (ctx) => {
   await ctx.answerCbQuery();
   if (action === 'panel') {
     await showOwnerPanel(ctx, true);
+  } else if (action === 'broadcast') {
+    ownerSessions.set(String(ctx.from.id), { action: 'broadcast_content' });
+    await ctx.reply(
+      'Foydalanuvchilarga yuboriladigan xabarni yuboring: matn yoki media (rasm, GIF, video, audio, voice, fayl va boshqalar). Telegram’dagi formatlash va premium emoji saqlanadi. /cancel',
+    );
   } else if (action === 'admins') {
     await renderAdmins(ctx, true);
   } else if (action === 'bonus_admin') {
