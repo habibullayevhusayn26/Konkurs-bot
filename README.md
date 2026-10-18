@@ -28,7 +28,8 @@ Bot va Mini App bir xil domen orqali xizmat qilishi kerak, chunki Mini App API s
 - Taklif faqat botning shaxsiy chatida ilgari qayd etilmagan yangi foydalanuvchi `/start` bosib, barcha majburiy kanallarga obuna bo‘lgach hisoblanadi.
 - Bir Telegram akkaunti faqat bir marta hisoblanadi; o‘zini taklif qilish hisoblanmaydi.
 - Har bir tasdiqlangan referral foydalanuvchi balansiga 1 ball qo‘shadi.
-- Mini App va bot foydalanuvchiga balansni ko‘rish, referral havolasini ulashish hamda NFT yoki Telegram Premium sovg‘alariga so‘rov yuborish imkonini beradi. Bot buyruqlari: `/balance`, `/invite` va `/prizes`.
+- Botdagi **Bonuslar** bo‘limida bonus kanaliga obunani tekshirtirib bir marta 3 ball, so‘ng har 24 soatda 2 ball kunlik bonus olish mumkin. Bonus ballari referral ballari bilan birga sarflanadi.
+- Mini App va bot foydalanuvchiga balansni ko‘rish, referral havolasini ulashish hamda NFT yoki Telegram Premium sovg‘alariga so‘rov yuborish imkonini beradi. Bot buyruqlari: `/balance`, `/invite`, `/prizes` va `/bonus`.
 - Botdagi **Sotib olish** bo‘limida 3 oylik Premium 1000 Stars, 6 oylik 1500 Stars va 12 oylik 2500 Stars turadi. To‘lov Telegram Stars (XTR) orqali olinadi va muvaffaqiyatli to‘lovdan keyin `giftPremiumSubscription` orqali avtomatik topshiriladi.
 - Telegram Bot API avtomatik Premium sovg‘asini faqat 3, 6 yoki 12 oyga qo‘llaydi. Bot foydalanuvchining Stars balansiga haqiqiy Stars yubora olmaydi; shu sabab Stars sotish/yuborish va 1 yoki 2 oylik Premium xaridi mavjud emas.
 - Katalogdagi sovg‘alar, jumladan Premium obunalari, referral ball narxi bilan ko‘rsatiladi. Admin so‘rovni qabul qilganda ball sarflanadi; rad qilganda ball sarflanmaydi. Har bir qabul qilingan sovg‘ani admin qo‘lda topshiradi.
@@ -51,6 +52,7 @@ Bot egasi yoki qo‘shimcha admin shaxsiy chatda `/admin` yuboradi:
 - **Sovg‘a so‘rovlari** — foydalanuvchi so‘rovini qabul qilish yoki rad etish. So‘rov xabari barcha adminlarga bot orqali yuboriladi.
 - **Telegram Premium sovg‘asi** — 1, 3, 6 yoki 12 oylik Premium mukofot qo‘shib, referral ball narxini belgilang. Tasdiqlangan Premium so‘rovini admin Telegram orqali qo‘lda sovg‘a qiladi.
 - **Majburiy obuna kanallari** — kanal qo‘shish, tahrirlash yoki o‘chirish. Obunani tekshirish uchun bot kanal administratori bo‘lishi kerak.
+- **Bonuslar va promokodlar** — bonus uchun alohida kanal ulash, promokod beradigan ball va foydalanish limitini belgilash. Yaratilgan kod bonus kanaliga user botni ochib kodni avtomatik faollashtiradigan inline tugma bilan yuboriladi. Bot bonus kanalida administrator bo‘lishi kerak.
 - **Adminlarni boshqarish** — faqat bot egasi qo‘shimcha adminlarni raqamli Telegram ID orqali qo‘shishi yoki olib tashlashi mumkin. Qo‘shimcha adminlar so‘rovlarni ko‘rib chiqadi va boshqa admin bo‘limlaridan foydalanadi; bot egasining huquqi saqlanib qoladi.
 
 `OWNER_ID` raqamli Telegram user ID bo‘lishi kerak. Ommaviy kanal username’ini (`@kanal`) yoki yopiq kanal uchun `-100... https://t.me/+invite` ko‘rinishida kiriting.
@@ -58,7 +60,7 @@ Qo‘shimcha adminlar bot egasining `/admin` panelidan boshqariladi; ular botni 
 
 ## Ma’lumotlar bazasi
 
-Bot `bot_admins`, `blocked_users`, `required_channels`, `campaign_users`, `qualified_referrals`, `referral_rewards`, `gift_requests`, `campaign_prizes`, `purchase_orders` va `bot_recipients` MongoDB collection’laridan foydalanadi. `campaign_prizes` referral mukofotlarini, `purchase_orders` esa pulli Premium xaridlarining to‘lov va topshirish holatini saqlaydi. Mavjud botdan saqlangan kanal sozlamalari qayta ishlatiladi. Referral mukofotlari va `campaign_users` yozuvlari kampaniyaga tegishli.
+Bot `bot_admins`, `blocked_users`, `required_channels`, `bonus_settings`, `bonus_promos`, `bonus_promo_redemptions`, `campaign_users`, `qualified_referrals`, `referral_rewards`, `gift_requests`, `campaign_prizes`, `purchase_orders` va `bot_recipients` MongoDB collection’laridan foydalanadi. `campaign_users` bonus ballari va bonus olish vaqtlarini saqlaydi; `bonus_promos` limitli promokodlarni, `bonus_promo_redemptions` esa foydalangan userlarni saqlaydi. `purchase_orders` pulli Premium xaridlarining to‘lov va topshirish holatini saqlaydi. Referral mukofotlari va `campaign_users` yozuvlari kampaniyaga tegishli.
 
 Bot tokeni va MongoDB parolini `.env` faylida saqlang va uni hech qachon ommaviy repository’ga joylamang.
 # Konkurs-bot

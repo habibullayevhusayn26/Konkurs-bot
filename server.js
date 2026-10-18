@@ -53,6 +53,9 @@ async function initializeDatabase() {
     admins: database.collection('bot_admins'),
     blockedUsers: database.collection('blocked_users'),
     channels: database.collection('required_channels'),
+    bonusSettings: database.collection('bonus_settings'),
+    promos: database.collection('bonus_promos'),
+    promoRedemptions: database.collection('bonus_promo_redemptions'),
     campaignUsers: database.collection('campaign_users'),
     referrals: database.collection('qualified_referrals'),
     rewards: database.collection('referral_rewards'),
@@ -73,6 +76,8 @@ async function initializeDatabase() {
     { telegram_payment_charge_id: 1 },
     { unique: true, partialFilterExpression: { telegram_payment_charge_id: { $type: 'string' } } },
   );
+  await collections.promos.createIndex({ code: 1 }, { unique: true });
+  await collections.promoRedemptions.createIndex({ promo_id: 1, user_id: 1 }, { unique: true });
 }
 
 function isOwner(ctx) {
@@ -314,6 +319,130 @@ async function saveChannelFromOwner(ctx, rawText, oldChannelId) {
   await saveRequiredChannel(channel);
 }
 
+async function getBonusSettings() {
+  return collections.bonusSettings.findOne({ _id: 'main' });
+}
+
+async function saveBonusChannel(ctx, rawText) {
+  const channel = parseChannelInput(rawText);
+  const member = await ctx.telegram.getChatMember(channel.channel_id, ctx.botInfo.id);
+  if (!['creator', 'administrator'].includes(member.status)) {
+    throw new Error('Bot avval bonus kanalida administrator bo‘lishi kerak.');
+  }
+  const chat = await ctx.telegram.getChat(channel.channel_id);
+  channel.title = chat.title || channel.channel_id;
+  if (!channel.invite_url && chat.username) {
+    channel.invite_url = `https://t.me/${chat.username}`;
+  }
+  if (!channel.invite_url) {
+    throw new Error('Kanal uchun taklif havolasini aniqlab bo‘lmadi.');
+  }
+  await collections.bonusSettings.updateOne(
+    { _id: 'main' },
+    {
+      $set: {
+        channel_id: channel.channel_id,
+        invite_url: channel.invite_url,
+        title: channel.title,
+        updated_at: new Date(),
+      },
+      $setOnInsert: { created_at: new Date() },
+    },
+    { upsert: true },
+  );
+}
+
+async function redeemPromo(user, promoId) {
+  const userId = String(user.id);
+  await ensureCampaignUser(user);
+  const promo = await collections.promos.findOne({ _id: promoId, active: true });
+  if (!promo) return { status: 'unavailable' };
+  const redemptionId = `${promoId}:${userId}`;
+  let redemption = await collections.promoRedemptions.findOne({ _id: redemptionId });
+
+  if (!redemption) {
+    const reservation = await collections.promos.updateOne(
+      { _id: promoId, active: true, $expr: { $lt: ['$used_count', '$max_uses'] } },
+      { $inc: { used_count: 1 } },
+    );
+    if (!reservation.modifiedCount) return { status: 'exhausted' };
+    try {
+      await collections.promoRedemptions.insertOne({
+        _id: redemptionId,
+        promo_id: promoId,
+        user_id: userId,
+        points: promo.points,
+        status: 'pending',
+        redeemed_at: new Date(),
+      });
+      redemption = {
+        _id: redemptionId,
+        promo_id: promoId,
+        user_id: userId,
+        points: promo.points,
+        status: 'pending',
+      };
+    } catch (error) {
+      await collections.promos.updateOne(
+        { _id: promoId, used_count: { $gt: 0 } },
+        { $inc: { used_count: -1 } },
+      );
+      if (error.code === 11000) {
+        redemption = await collections.promoRedemptions.findOne({ _id: redemptionId });
+        if (redemption) return redeemPromo(user, promoId);
+      }
+      throw error;
+    }
+  }
+
+  const account = await collections.campaignUsers.findOne({ _id: userId });
+  if (account && (account.redeemed_promo_ids || []).includes(promoId)) {
+    await collections.promoRedemptions.updateOne(
+      { _id: redemptionId },
+      { $set: { status: 'awarded', awarded_at: new Date() } },
+    );
+    return { status: 'already_redeemed' };
+  }
+  const credit = await collections.campaignUsers.updateOne(
+    { _id: userId, redeemed_promo_ids: { $ne: promoId } },
+    { $inc: { bonus_points: redemption.points }, $addToSet: { redeemed_promo_ids: promoId } },
+  );
+  if (!credit.modifiedCount) {
+    const creditedAccount = await collections.campaignUsers.findOne({ _id: userId });
+    if (creditedAccount && (creditedAccount.redeemed_promo_ids || []).includes(promoId)) {
+      await collections.promoRedemptions.updateOne(
+        { _id: redemptionId },
+        { $set: { status: 'awarded', awarded_at: new Date() } },
+      );
+      return { status: 'already_redeemed' };
+    }
+    throw new Error(`Could not credit promo ${promoId} to user ${userId}.`);
+  }
+  await collections.promoRedemptions.updateOne(
+    { _id: redemptionId },
+    { $set: { status: 'awarded', awarded_at: new Date() } },
+  );
+  return { status: 'awarded', points: redemption.points };
+}
+
+async function reportPromoRedemption(ctx, promoId) {
+  try {
+    const result = await redeemPromo(ctx.from, promoId);
+    if (result.status === 'awarded') {
+      await replyText(ctx, `Promokod qabul qilindi: +${result.points} bonus ball.`);
+    } else if (result.status === 'already_redeemed') {
+      await replyText(ctx, 'Siz bu promokoddan avval foydalangansiz.');
+    } else if (result.status === 'exhausted') {
+      await replyText(ctx, 'Bu promokoddan foydalanish limiti tugagan.');
+    } else {
+      await replyText(ctx, 'Bu promokod faol emas yoki mavjud emas.');
+    }
+  } catch (error) {
+    console.error(`Could not redeem promo ${promoId} for user ${ctx.from.id}:`, error);
+    await replyText(ctx, 'Promokodni faollashtirib bo‘lmadi. Birozdan keyin qayta urinib ko‘ring.');
+  }
+}
+
 async function ensureCampaignUser(user, referralPayload = '') {
   const userId = String(user.id);
   const existing = await collections.campaignUsers.findOne({ _id: userId });
@@ -503,33 +632,22 @@ function startReferralPayload(ctx) {
 function addPremiumButtonIcon(button, isPremium) {
   if (!isPremium) {
     const lowerText = button.text.toLocaleLowerCase();
-    const emojiId = lowerText.includes('mini appni ochish')
-      ? MESSAGE_EMOJI_IDS.miniApp
-      : lowerText === 'balansim'
-        ? MESSAGE_EMOJI_IDS.balance
-        : lowerText.includes('do‘stni taklif qilish')
-          ? MESSAGE_EMOJI_IDS.invite
-          : lowerText === 'sotib olish'
-            ? MESSAGE_EMOJI_IDS.spend
-              : lowerText.includes('obunani tekshirish')
-                ? MESSAGE_EMOJI_IDS.checkSubscription
-                : lowerText.includes('bosh menyu')
-                  ? MESSAGE_EMOJI_IDS.home
-                  : lowerText.includes('do‘stga ulashish')
-                    ? MESSAGE_EMOJI_IDS.link
-                    : lowerText.includes('referal statistikasi') || lowerText.includes('referral statistikasi')
-                      ? MESSAGE_EMOJI_IDS.stats
-                      : lowerText.includes('sovg‘a so‘rovlari')
-                        ? MESSAGE_EMOJI_IDS.requests
-                        : lowerText.includes('kutilayotgan giftlar')
-                          ? MESSAGE_EMOJI_IDS.pending
-                          : lowerText.includes('majburiy kanal obunalari')
-                            ? MESSAGE_EMOJI_IDS.channels
-                            : lowerText.includes('foydalanuvchini qidirish')
-                              ? MESSAGE_EMOJI_IDS.user
-                              : lowerText.includes('adminlarni boshqarish')
-                                ? MESSAGE_EMOJI_IDS.admins
-                                : null;
+    let emojiId = null;
+    if (lowerText.includes('mini appni ochish')) emojiId = MESSAGE_EMOJI_IDS.miniApp;
+    else if (lowerText === 'balansim') emojiId = MESSAGE_EMOJI_IDS.balance;
+    else if (lowerText.includes('do‘stni taklif qilish')) emojiId = MESSAGE_EMOJI_IDS.invite;
+    else if (lowerText === 'sotib olish') emojiId = MESSAGE_EMOJI_IDS.spend;
+    else if (lowerText.includes('obunani tekshirish')) emojiId = MESSAGE_EMOJI_IDS.checkSubscription;
+    else if (lowerText.includes('bosh menyu')) emojiId = MESSAGE_EMOJI_IDS.home;
+    else if (lowerText.includes('do‘stga ulashish')) emojiId = MESSAGE_EMOJI_IDS.link;
+    else if (lowerText.includes('referal statistikasi') || lowerText.includes('referral statistikasi')) {
+      emojiId = MESSAGE_EMOJI_IDS.stats;
+    } else if (lowerText.includes('sovg‘a so‘rovlari')) emojiId = MESSAGE_EMOJI_IDS.requests;
+    else if (lowerText.includes('kutilayotgan giftlar')) emojiId = MESSAGE_EMOJI_IDS.pending;
+    else if (lowerText.includes('majburiy kanal obunalari')) emojiId = MESSAGE_EMOJI_IDS.channels;
+    else if (lowerText.includes('foydalanuvchini qidirish')) emojiId = MESSAGE_EMOJI_IDS.user;
+    else if (lowerText.includes('adminlarni boshqarish')) emojiId = MESSAGE_EMOJI_IDS.admins;
+    else if (lowerText.includes('bonus') || lowerText.includes('promokod')) emojiId = MESSAGE_EMOJI_IDS.reward;
     return emojiId ? { ...button, icon_custom_emoji_id: emojiId } : button;
   }
   return {
@@ -592,6 +710,7 @@ function mainMenuKeyboard() {
   rows.push([callbackButton('Sovg‘alar va Premium', 'menu:prizes')]);
   rows.push([callbackButton('👥 Do‘stni taklif qilish', 'menu:invite')]);
   rows.push([callbackButton('Sotib olish', 'purchase:home')]);
+  rows.push([callbackButton('Bonuslar', 'bonus:home', 'success')]);
   return twoColumnKeyboard(rows);
 }
 
@@ -618,7 +737,7 @@ async function getCampaignStats(userId) {
   ]);
   const spentReferrals = acceptedRequests.reduce((total, request) => total + request.referrals_cost, 0)
     + (pendingRequest ? pendingRequest.referrals_cost : 0);
-  const referralBalance = Math.max(0, referralCount - spentReferrals);
+  const referralBalance = Math.max(0, referralCount + (profile && profile.bonus_points || 0) - spentReferrals);
   const botLink = `https://t.me/${botUsername}?start=ref_${userId}`;
   return {
     firstName: profile ? profile.first_name : '',
@@ -662,7 +781,9 @@ async function createGiftRequest(telegramUser, prizeId) {
   ]);
   const referralBalance = Math.max(
     0,
-    referralCount - previousRequests.reduce((total, request) => total + request.referrals_cost, 0),
+    referralCount
+      + (profile && profile.bonus_points || 0)
+      - previousRequests.reduce((total, request) => total + request.referrals_cost, 0),
   );
   const prize = await collections.prizes.findOne({ _id: prizeId, active: true });
   if (!prize) {
@@ -728,6 +849,72 @@ async function showBalance(ctx) {
     message,
     { ...mainMenuKeyboard(), parse_mode: 'HTML' },
   );
+}
+
+async function showBonusMenu(ctx) {
+  const userId = String(ctx.from.id);
+  const [settings, profile] = await Promise.all([
+    getBonusSettings(),
+    collections.campaignUsers.findOne({ _id: userId }),
+  ]);
+  const rows = [];
+  if (settings) {
+    rows.push([urlButton('Bonus kanaliga obuna bo‘lish', settings.invite_url)]);
+    if (profile && profile.bonus_channel_claimed_at) {
+      rows.push([callbackButton('Obuna bonusi olindi', 'bonus:channel_claimed')]);
+    } else {
+      rows.push([callbackButton('Obunani tekshirish · +3 ball', 'bonus:channel')]);
+    }
+  }
+  const nextDailyAt = profile && profile.daily_bonus_at
+    ? new Date(profile.daily_bonus_at.getTime() + 24 * 60 * 60 * 1000)
+    : null;
+  const dailyAvailable = !nextDailyAt || nextDailyAt <= new Date();
+  rows.push([callbackButton(
+    dailyAvailable ? 'Kunlik bonusni olish · +2 ball' : `Kunlik bonus · ${nextDailyAt.toLocaleString('uz-UZ')}`,
+    'bonus:daily',
+    dailyAvailable ? 'success' : 'primary',
+  )]);
+  rows.push([callbackButton('Bosh menyu', 'menu:home')]);
+
+  const channelText = !settings
+    ? 'Obuna bonusi uchun bonus kanali hali sozlanmagan.'
+    : profile && profile.bonus_channel_claimed_at
+      ? 'Kanalga obuna bonusi: olindi (+3 ball).'
+      : 'Bonus kanaliga obuna bo‘ling va obunani tekshirib 3 ball oling.';
+  const dailyText = dailyAvailable
+    ? 'Bugungi kunlik bonus: tayyor (+2 ball).'
+    : `Keyingi kunlik bonus: ${nextDailyAt.toLocaleString('uz-UZ')}.`;
+  let text = `Bonuslar\n\n${channelText}\n${dailyText}\n\nKunlik bonus har 24 soatda bir marta olinadi.`;
+  text = addMessageEmoji(text, 'Bonuslar', MESSAGE_EMOJI_IDS.reward, '🎁');
+  await replyText(ctx, text, { ...twoColumnKeyboard(rows), parse_mode: 'HTML' });
+}
+
+async function showBonusAdmin(ctx, edit = false) {
+  const [settings, promos] = await Promise.all([
+    getBonusSettings(),
+    collections.promos.find().sort({ created_at: -1 }).limit(10).toArray(),
+  ]);
+  const rows = [
+    [callbackButton(settings ? 'Bonus kanalini o‘zgartirish' : 'Bonus kanalini ulash', 'admin:bonus_channel_set', 'success')],
+    [callbackButton('Yangi promokod yaratish', 'admin:promo_add', 'success')],
+    ...promos.filter((promo) => promo.active).map((promo) => [
+      callbackButton(`O‘chirish: ${promo.code}`, `admin:promo_disable:${promo._id}`, 'danger'),
+    ]),
+    [callbackButton('Panelga qaytish', 'admin:panel')],
+  ];
+  const channelLine = settings
+    ? `Bonus kanali: ${settings.title} (${settings.channel_id})`
+    : 'Bonus kanali hali ulanmagan.';
+  const promoLines = promos.length
+    ? promos.map((promo) => `${promo.code} — +${promo.points} ball; ${promo.used_count}/${promo.max_uses}; ${promo.active ? 'faol' : 'o‘chirilgan'}`).join('\n')
+    : 'Promokodlar hali yaratilmagan.';
+  const text = `Bonuslar va promokodlar\n\n${channelLine}\n\nSo‘nggi promokodlar:\n${promoLines}`;
+  if (edit && ctx.callbackQuery && ctx.callbackQuery.message) {
+    await editText(ctx, text, twoColumnKeyboard(rows));
+  } else {
+    await replyText(ctx, text, twoColumnKeyboard(rows));
+  }
 }
 
 async function showInviteLink(ctx) {
@@ -985,7 +1172,8 @@ async function renderCampaignUser(ctx, userId, edit = false) {
   const referralSpent = requests
     .filter((request) => request.status === 'approved' || request.status === 'pending')
     .reduce((total, request) => total + (Number.isSafeInteger(request.referrals_cost) ? request.referrals_cost : 0), 0);
-  const referralBalance = Math.max(0, referrals - referralSpent);
+  const bonusPoints = profile && Number.isSafeInteger(profile.bonus_points) ? profile.bonus_points : 0;
+  const referralBalance = Math.max(0, referrals + bonusPoints - referralSpent);
   let referredByText = 'Yo‘q';
   if (profile && profile.referred_by) {
     const referrer = await collections.campaignUsers.findOne({ _id: profile.referred_by });
@@ -1019,6 +1207,7 @@ async function renderCampaignUser(ctx, userId, edit = false) {
     `Oxirgi faollik: ${formatUserDate(profile && profile.last_seen_at)}`,
     `Taklif qilgan: ${referredByText}`,
     `Takliflari: ${referrals}`,
+    `Bonus ballari: ${bonusPoints}`,
     `Referral balansi: ${referralBalance}`,
     `So‘nggi sovg‘a so‘rovlari:\n${requestText}`,
     `Eski mukofotlar:\n${rewardText}`,
@@ -1219,6 +1408,7 @@ function ownerPanelKeyboard(includeAdminManagement = false) {
     [callbackButton('Kutilayotgan giftlar', 'admin:rewards')],
     [callbackButton('Majburiy kanal obunalari', 'admin:channels')],
     [callbackButton('Foydalanuvchini qidirish', 'admin:user_search')],
+    [callbackButton('Bonuslar va promokodlar', 'admin:bonus_admin')],
   ];
   if (includeAdminManagement) rows.push([callbackButton('Adminlarni boshqarish', 'admin:admins')]);
   return twoColumnKeyboard(rows);
@@ -1357,6 +1547,111 @@ async function handleAdminInput(ctx) {
     ownerSessions.delete(adminId);
     await ctx.reply('❎ Amal bekor qilindi.');
     await showOwnerPanel(ctx);
+    return true;
+  }
+  if (session.action === 'bonus_channel_set') {
+    try {
+      await saveBonusChannel(ctx, text);
+      ownerSessions.delete(adminId);
+      await ctx.reply('Bonus kanali ulandi. Bot kanalda administrator bo‘lib qolishi kerak.');
+      await showBonusAdmin(ctx);
+    } catch (error) {
+      await ctx.reply(`Bonus kanalini ulab bo‘lmadi: ${error.message}. Qayta yuboring yoki /cancel yozing.`);
+    }
+    return true;
+  }
+  if (session.action === 'promo_code') {
+    const code = text.trim().toUpperCase();
+    if (!/^[A-Z0-9_-]{3,32}$/.test(code)) {
+      await ctx.reply('Promokod 3–32 ta lotin harfi, raqam, chiziqcha yoki pastki chiziqdan iborat bo‘lsin. Qayta yuboring yoki /cancel yozing.');
+      return true;
+    }
+    if (await collections.promos.findOne({ code })) {
+      await ctx.reply('Bu promokod avval yaratilgan. Boshqa kod kiriting yoki /cancel yozing.');
+      return true;
+    }
+    ownerSessions.set(adminId, { action: 'promo_points', code, promoId: crypto.randomBytes(12).toString('hex') });
+    await ctx.reply('Bu promokod nechta ball bersin? 1 dan 1 000 000 gacha butun son yuboring. /cancel');
+    return true;
+  }
+  if (session.action === 'promo_points') {
+    const points = Number(text.trim());
+    if (!Number.isSafeInteger(points) || points < 1 || points > 1000000) {
+      await ctx.reply('Bonus ball miqdori 1 dan 1 000 000 gacha butun son bo‘lishi kerak. Qayta kiriting yoki /cancel yozing.');
+      return true;
+    }
+    ownerSessions.set(adminId, { ...session, action: 'promo_uses', points });
+    await ctx.reply('Promokoddan ko‘pi bilan nechta foydalanuvchi foydalansin? 1 dan 1 000 000 gacha butun son yuboring. /cancel');
+    return true;
+  }
+  if (session.action === 'promo_uses') {
+    const maxUses = Number(text.trim());
+    if (!Number.isSafeInteger(maxUses) || maxUses < 1 || maxUses > 1000000) {
+      await ctx.reply('Foydalanish limiti 1 dan 1 000 000 gacha butun son bo‘lishi kerak. Qayta kiriting yoki /cancel yozing.');
+      return true;
+    }
+    const settings = await getBonusSettings();
+    if (!settings) {
+      ownerSessions.delete(adminId);
+      await ctx.reply('Bonus kanali hali ulanmagan. Avval /admin → Bonuslar va promokodlar bo‘limidan kanalni ulang.');
+      return true;
+    }
+    const promo = {
+      _id: session.promoId,
+      code: session.code,
+      points: session.points,
+      max_uses: maxUses,
+      used_count: 0,
+      active: true,
+      created_at: new Date(),
+      created_by: adminId,
+    };
+    try {
+      await collections.promos.insertOne(promo);
+    } catch (error) {
+      ownerSessions.delete(adminId);
+      console.error(`Could not save promo ${promo._id}:`, error);
+      await ctx.reply(`Promokodni saqlab bo‘lmadi: ${error.message}`);
+      return true;
+    }
+    const postText = `${customEmojiTag(MESSAGE_EMOJI_IDS.reward, '🎁')} <b>Bonus promokodi</b>\n\n`
+      + `Kod: <code>${escapeHtml(promo.code)}</code>\n`
+      + `Bonus: ${promo.points} ball\n`
+      + `Foydalanish limiti: ${promo.max_uses} ta user`;
+    let post;
+    try {
+      post = await bot.telegram.sendMessage(
+        settings.channel_id,
+        postText,
+        {
+          parse_mode: 'HTML',
+          ...Markup.inlineKeyboard([[
+            urlButton('Promokodni ishlatish', `https://t.me/${botUsername}?start=promo_${promo._id}`),
+          ]]),
+        },
+      );
+    } catch (error) {
+      await collections.promos.updateOne(
+        { _id: promo._id },
+        { $set: { active: false, publish_error: error.message } },
+      );
+      ownerSessions.delete(adminId);
+      console.error(`Could not publish promo ${promo._id} to ${settings.channel_id}:`, error);
+      await ctx.reply(`Promokod kanalga yuborilmadi va o‘chirildi: ${error.message}`);
+      await showBonusAdmin(ctx);
+      return true;
+    }
+    try {
+      await collections.promos.updateOne(
+        { _id: promo._id },
+        { $set: { channel_message_id: post.message_id, posted_at: new Date() } },
+      );
+    } catch (error) {
+      console.error(`Promo ${promo._id} was posted but its message metadata could not be saved:`, error);
+    }
+    ownerSessions.delete(adminId);
+    await ctx.reply(`Promokod ${promo.code} yaratildi va bonus kanaliga yuborildi.`);
+    await showBonusAdmin(ctx);
     return true;
   }
   if (session.action === 'prize_add') {
@@ -1538,6 +1833,15 @@ bot.use(async (ctx, next) => {
     }
     return;
   }
+  if (!admin && isStartCommand) {
+    const match = /^promo_([a-f0-9]{24})$/i.exec(referralPayload);
+    if (match) {
+      await collections.campaignUsers.updateOne(
+        { _id: adminId },
+        { $set: { pending_promo_id: match[1].toLowerCase() } },
+      );
+    }
+  }
   if (admin || (ctx.callbackQuery && ctx.callbackQuery.data === 'subscription:check')) {
     await next();
     return;
@@ -1578,6 +1882,15 @@ bot.catch((error, ctx) => {
 
 bot.start(async (ctx) => {
   await showWelcome(ctx);
+  const match = /^promo_([a-f0-9]{24})$/i.exec(startReferralPayload(ctx));
+  if (match) {
+    const promoId = match[1].toLowerCase();
+    await collections.campaignUsers.updateOne(
+      { _id: String(ctx.from.id), pending_promo_id: promoId },
+      { $unset: { pending_promo_id: '' } },
+    );
+    await reportPromoRedemption(ctx, promoId);
+  }
 });
 
 bot.on('pre_checkout_query', validatePremiumPreCheckout);
@@ -1590,12 +1903,13 @@ bot.on('message', async (ctx, next) => {
 });
 
 bot.command('help', async (ctx) => {
-  await replyText(ctx, 'Botda /balance orqali ballaringizni ko‘ring, /invite orqali taklif havolasini oling va /prizes orqali NFT yoki Telegram Premium so‘rang. Yoki quyidagi menyudan foydalaning:', mainMenuKeyboard());
+  await replyText(ctx, 'Botda /balance orqali ballaringizni ko‘ring, /invite orqali taklif havolasini oling, /prizes orqali mukofotlarni ko‘ring va /bonus orqali bonuslarni oling. Yoki quyidagi menyudan foydalaning:', mainMenuKeyboard());
 });
 
 bot.command('balance', showBalance);
 bot.command('invite', showInviteLink);
 bot.command('prizes', showPrizeMenu);
+bot.command('bonus', showBonusMenu);
 
 bot.action(/^purchase:(.+)$/, async (ctx) => {
   const action = ctx.match[1];
@@ -1615,6 +1929,85 @@ bot.action(/^purchase:(.+)$/, async (ctx) => {
     console.error(`Could not create Premium invoice for ${ctx.from.id}:`, error);
     await replyText(ctx, 'To‘lov oynasini ochib bo‘lmadi. Birozdan keyin qayta urinib ko‘ring.');
   }
+});
+
+bot.action(/^bonus:(.+)$/, async (ctx) => {
+  const action = ctx.match[1];
+  const userId = String(ctx.from.id);
+  if (action === 'home') {
+    await ctx.answerCbQuery();
+    await showBonusMenu(ctx);
+    return;
+  }
+  if (action === 'channel_claimed') {
+    await ctx.answerCbQuery('Kanal bonusi avval olingan.', { show_alert: true });
+    return;
+  }
+  if (action === 'channel') {
+    const settings = await getBonusSettings();
+    if (!settings) {
+      await ctx.answerCbQuery('Bonus kanali hali sozlanmagan.', { show_alert: true });
+      return;
+    }
+    const account = await collections.campaignUsers.findOne({ _id: userId });
+    if (account && account.bonus_channel_claimed_at) {
+      await ctx.answerCbQuery('Kanalga obuna bonusi avval olingan.', { show_alert: true });
+      return;
+    }
+    try {
+      const member = await bot.telegram.getChatMember(settings.channel_id, ctx.from.id);
+      if (!isSubscribedMember(member)) {
+        await ctx.answerCbQuery('Avval bonus kanaliga obuna bo‘ling.', { show_alert: true });
+        await ctx.reply(
+          'Bonus kanaliga obuna bo‘lib, so‘ng tekshirish tugmasini bosing.',
+          Markup.inlineKeyboard([[urlButton('Bonus kanalini ochish', settings.invite_url)]]),
+        );
+        return;
+      }
+      const result = await collections.campaignUsers.updateOne(
+        { _id: userId, bonus_channel_claimed_at: { $exists: false } },
+        { $inc: { bonus_points: 3 }, $set: { bonus_channel_claimed_at: new Date() } },
+      );
+      await ctx.answerCbQuery(
+        result.modifiedCount ? 'Obuna tasdiqlandi: +3 ball!' : 'Kanalga obuna bonusi avval olingan.',
+        { show_alert: true },
+      );
+      await showBonusMenu(ctx);
+    } catch (error) {
+      console.error(`Could not verify bonus channel subscription for ${userId}:`, error);
+      await ctx.answerCbQuery('Obunani tekshirib bo‘lmadi. Keyinroq qayta urinib ko‘ring.', { show_alert: true });
+    }
+    return;
+  }
+  if (action === 'daily') {
+    const now = new Date();
+    const cutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const result = await collections.campaignUsers.updateOne(
+      {
+        _id: userId,
+        $or: [
+          { daily_bonus_at: { $exists: false } },
+          { daily_bonus_at: { $lte: cutoff } },
+        ],
+      },
+      { $inc: { bonus_points: 2 }, $set: { daily_bonus_at: now } },
+    );
+    if (result.modifiedCount) {
+      await ctx.answerCbQuery('Kunlik bonus olindi: +2 ball!', { show_alert: true });
+    } else {
+      const account = await collections.campaignUsers.findOne({ _id: userId });
+      const nextAt = account && account.daily_bonus_at
+        ? new Date(account.daily_bonus_at.getTime() + 24 * 60 * 60 * 1000)
+        : null;
+      await ctx.answerCbQuery(
+        nextAt ? `Keyingi bonus ${nextAt.toLocaleString('uz-UZ')} da ochiladi.` : 'Kunlik bonusni olib bo‘lmadi.',
+        { show_alert: true },
+      );
+    }
+    await showBonusMenu(ctx);
+    return;
+  }
+  await ctx.answerCbQuery('Noma’lum bonus amali.', { show_alert: true });
 });
 
 bot.action(/^menu:(.+)$/, async (ctx) => {
@@ -1681,6 +2074,16 @@ bot.action('subscription:check', async (ctx) => {
     }
     await qualifyReferral(String(ctx.from.id));
     await ctx.answerCbQuery('✅ Obuna tasdiqlandi.');
+    const userId = String(ctx.from.id);
+    const account = await collections.campaignUsers.findOne({ _id: userId });
+    if (account && account.pending_promo_id) {
+      const promoId = account.pending_promo_id;
+      await collections.campaignUsers.updateOne(
+        { _id: userId, pending_promo_id: promoId },
+        { $unset: { pending_promo_id: '' } },
+      );
+      await reportPromoRedemption(ctx, promoId);
+    }
     await showWelcome(ctx);
   } catch (error) {
     console.error(`Failed to check required-channel subscription for ${ctx.from.id}:`, error);
@@ -1754,6 +2157,31 @@ bot.action(/^admin:(.+)$/, async (ctx) => {
     await showOwnerPanel(ctx, true);
   } else if (action === 'admins') {
     await renderAdmins(ctx, true);
+  } else if (action === 'bonus_admin') {
+    await renderBonusAdmin(ctx, true);
+  } else if (action === 'bonus_channel_set') {
+    ownerSessions.set(String(ctx.from.id), { action: 'bonus_channel_set' });
+    await ctx.reply('Bonus kanalining @username yoki -100... ID’sini, kerak bo‘lsa taklif havolasi bilan yuboring. Bot kanal administratori bo‘lishi kerak. Bekor qilish: /cancel');
+  } else if (action === 'promo_add') {
+    if (!await getBonusSettings()) {
+      await ctx.reply('Avval bonus kanalini ulang.');
+      await renderBonusAdmin(ctx);
+      return;
+    }
+    ownerSessions.set(String(ctx.from.id), { action: 'promo_code' });
+    await ctx.reply('Yangi promokod matnini yuboring (3–32 ta lotin harfi, raqam, _ yoki -). Bekor qilish: /cancel');
+  } else if (action.startsWith('promo_disable:')) {
+    const promoId = action.slice('promo_disable:'.length);
+    if (!/^[a-f0-9]{24}$/.test(promoId)) {
+      await ctx.reply('Promokod identifikatori noto‘g‘ri.');
+      return;
+    }
+    const result = await collections.promos.updateOne(
+      { _id: promoId, active: true },
+      { $set: { active: false, disabled_at: new Date(), disabled_by: String(ctx.from.id) } },
+    );
+    await ctx.reply(result.modifiedCount ? 'Promokod o‘chirildi.' : 'Faol promokod topilmadi.');
+    await renderBonusAdmin(ctx);
   } else if (action === 'admin_add') {
     ownerSessions.set(String(ctx.from.id), { action: 'admin_add' });
     await ctx.reply('Qo‘shiladigan adminning raqamli Telegram ID’sini yuboring. Bekor qilish: /cancel');
