@@ -116,6 +116,7 @@ function permissionForAdminAction(action) {
     || action.startsWith('prize_delete:')
     || action.startsWith('reward_done:')) return 'gifts';
   if (action === 'user_search'
+    || action.startsWith('user_message:')
     || action.startsWith('user_view:')
     || action.startsWith('user_balance_')
     || action.startsWith('user_block:')
@@ -131,7 +132,8 @@ function permissionForAdminAction(action) {
   return null;
 }
 
-function permissionForAdminSession(action) {
+function permissionForAdminSession(action, session) {
+  if (session.targetUserId) return 'users';
   if (action.startsWith('broadcast_')) return 'broadcast';
   if (['prize_add', 'prize_price', 'premium_months', 'premium_price'].includes(action)) return 'gifts';
   if (action === 'user_search' || action === 'user_balance_adjust') return 'users';
@@ -1544,6 +1546,7 @@ async function renderCampaignUser(ctx, userId, edit = false) {
       callbackButton('➕ Balans qo‘shish', `admin:user_balance_add:${userId}`, 'success'),
       callbackButton('➖ Balans ayirish', `admin:user_balance_subtract:${userId}`, 'danger'),
     ]);
+    rows.push([callbackButton('📢 Xabar yuborish', `admin:user_message:${userId}`, 'success')]);
   }
   if (!protectedAdmin) {
     rows.push([callbackButton(
@@ -1849,14 +1852,20 @@ function broadcastPreviewKeyboard(buttons) {
 
 async function deliverBroadcast(ctx, session) {
   const adminId = String(ctx.from.id);
-  const blockedUsers = await collections.blockedUsers.find().project({ _id: 1 }).toArray();
-  const blockedIds = new Set(blockedUsers.map((user) => user._id));
-  const total = await collections.campaignUsers.countDocuments({
-    _id: { $nin: [...blockedIds] },
-  });
+  const blockedIds = session.targetUserId
+    ? []
+    : (await collections.blockedUsers.find().project({ _id: 1 }).toArray()).map((user) => user._id);
+  const targetUser = session.targetUserId
+    ? await collections.campaignUsers.findOne({ _id: session.targetUserId }, { projection: { _id: 1 } })
+    : null;
+  const total = session.targetUserId
+    ? Number(Boolean(targetUser))
+    : await collections.campaignUsers.countDocuments({ _id: { $nin: blockedIds } });
   if (!total) {
     ownerSessions.delete(adminId);
-    await ctx.reply('Xabar yuboriladigan foydalanuvchi topilmadi.');
+    await ctx.reply(session.targetUserId
+      ? 'Xabar yuboriladigan foydalanuvchi topilmadi yoki botda qayd etilmagan.'
+      : 'Xabar yuboriladigan foydalanuvchi topilmadi.');
     return;
   }
 
@@ -1898,8 +1907,12 @@ async function deliverBroadcast(ctx, session) {
   let failed = 0;
   let firstFailure = '';
   ownerSessions.delete(adminId);
-  await ctx.reply(`Xabar ${total} ta foydalanuvchiga yuborilmoqda…`);
-  const users = collections.campaignUsers.find({ _id: { $nin: [...blockedIds] } }).project({ _id: 1 });
+  await ctx.reply(session.targetUserId
+    ? `Xabar ${session.targetUserId} ID’li foydalanuvchiga yuborilmoqda…`
+    : `Xabar ${total} ta foydalanuvchiga yuborilmoqda…`);
+  const users = session.targetUserId
+    ? [targetUser]
+    : collections.campaignUsers.find({ _id: { $nin: blockedIds } }).project({ _id: 1 });
   for await (const user of users) {
     const recipientId = Number(user._id);
     if (!Number.isSafeInteger(recipientId) || recipientId < 1) {
@@ -1931,10 +1944,10 @@ async function deliverBroadcast(ctx, session) {
     await new Promise((resolve) => setTimeout(resolve, 40));
   }
   if (failed) {
-    console.error(`Broadcast by admin ${adminId} finished with ${failed} delivery failure(s). First failure: ${firstFailure}`);
+    console.error(`Message delivery by admin ${adminId} finished with ${failed} failure(s). First failure: ${firstFailure}`);
   }
   await ctx.reply(
-    `Ommaviy xabar yakunlandi.\n\n✅ Yuborildi: ${sent}\n⚠️ Yetkazilmadi: ${failed}${failed ? `\nBirinchi xato: ${firstFailure.slice(0, 180)}` : ''}`,
+    `${session.targetUserId ? 'Shaxsiy xabar yuborish yakunlandi.' : 'Ommaviy xabar yakunlandi.'}\n\n✅ Yuborildi: ${sent}\n⚠️ Yetkazilmadi: ${failed}${failed ? `\nBirinchi xato: ${firstFailure.slice(0, 180)}` : ''}`,
   );
 }
 
@@ -1943,7 +1956,7 @@ async function handleBroadcastAdminInput(ctx, session) {
   const message = ctx.message;
   if (session.action === 'broadcast_media') {
     if (/^\/skip(?:@\w+)?(?:\s|$)/i.test((message.text || '').trim())) {
-      ownerSessions.set(adminId, { action: 'broadcast_text', sourceChatId: ctx.chat.id });
+      ownerSessions.set(adminId, { ...session, action: 'broadcast_text', sourceChatId: ctx.chat.id });
       await ctx.reply(
         `<tg-emoji emoji-id="${MESSAGE_EMOJI_IDS.broadcastText}">💬</tg-emoji> Xabar matnini yuboring. Premium emoji foydalanishingiz mumkin:`,
         { parse_mode: 'HTML' },
@@ -1959,6 +1972,7 @@ async function handleBroadcastAdminInput(ctx, session) {
       return true;
     }
     ownerSessions.set(adminId, {
+      ...session,
       action: 'broadcast_text',
       sourceChatId: ctx.chat.id,
       mediaMessageId: message.message_id,
@@ -2173,7 +2187,8 @@ async function handleAdminInput(ctx) {
   if (/^\/cancel(?:@\w+)?(?:\s|$)/i.test(text.trim())) {
     ownerSessions.delete(adminId);
     await ctx.reply('❎ Amal bekor qilindi.');
-    await showOwnerPanel(ctx);
+    if (session.targetUserId) await renderCampaignUser(ctx, session.targetUserId);
+    else await showOwnerPanel(ctx);
     return true;
   }
   if (session.action.startsWith('broadcast_')) {
@@ -2519,7 +2534,7 @@ bot.use(async (ctx, next) => {
   const admin = await isAdmin(ctx);
   const activeAdminSession = admin ? ownerSessions.get(adminId) : null;
   if (activeAdminSession) {
-    const requiredPermission = permissionForAdminSession(activeAdminSession.action);
+    const requiredPermission = permissionForAdminSession(activeAdminSession.action, activeAdminSession);
     const ownerOnlySession = activeAdminSession.action === 'admin_add';
     if ((ownerOnlySession && !isOwner(ctx))
       || (requiredPermission && !isOwner(ctx)
@@ -2804,19 +2819,20 @@ bot.action(/^broadcast:(.+)$/, async (ctx) => {
   }
   const adminId = String(ctx.from.id);
   const action = ctx.match[1];
+  const session = ownerSessions.get(adminId);
   if (action === 'cancel') {
     ownerSessions.delete(adminId);
     await ctx.answerCbQuery('Xabar yuborish bekor qilindi.');
-    await showOwnerPanel(ctx);
+    if (session && session.targetUserId) await renderCampaignUser(ctx, session.targetUserId);
+    else await showOwnerPanel(ctx);
     return;
   }
-  const session = ownerSessions.get(adminId);
   if (!session) {
     await ctx.answerCbQuery('Xabar yuborish sessiyasi topilmadi. Paneldan qayta boshlang.', { show_alert: true });
     return;
   }
   if (action === 'skip_media' && session.action === 'broadcast_media') {
-    ownerSessions.set(adminId, { action: 'broadcast_text', sourceChatId: ctx.chat.id });
+    ownerSessions.set(adminId, { ...session, action: 'broadcast_text', sourceChatId: ctx.chat.id });
     await ctx.answerCbQuery();
     await ctx.reply(
       `<tg-emoji emoji-id="${MESSAGE_EMOJI_IDS.broadcastText}">💬</tg-emoji> Xabar matnini yuboring. Premium emoji foydalanishingiz mumkin:`,
@@ -2884,6 +2900,12 @@ bot.action(/^broadcast:(.+)$/, async (ctx) => {
   if (action === 'finish' && session.action === 'broadcast_options') {
     await ctx.answerCbQuery();
     try {
+      if (session.targetUserId
+        && !await collections.campaignUsers.findOne({ _id: session.targetUserId }, { projection: { _id: 1 } })) {
+        ownerSessions.delete(adminId);
+        await ctx.reply('Tanlangan foydalanuvchi botda topilmadi. Xabar yuborilmadi.');
+        return;
+      }
       if (session.mediaMessageId) {
         await ctx.telegram.copyMessage(
           ctx.chat.id,
@@ -2904,19 +2926,25 @@ bot.action(/^broadcast:(.+)$/, async (ctx) => {
         );
       }
       ownerSessions.set(adminId, { ...session, action: 'broadcast_confirm' });
-      const blockedUsers = await collections.blockedUsers.find().project({ _id: 1 }).toArray();
-      const recipientCount = await collections.campaignUsers.countDocuments({
-        _id: { $nin: blockedUsers.map((user) => user._id) },
-      });
+      let recipientCount = 1;
+      if (!session.targetUserId) {
+        const blockedUsers = await collections.blockedUsers.find().project({ _id: 1 }).toArray();
+        recipientCount = await collections.campaignUsers.countDocuments({
+          _id: { $nin: blockedUsers.map((user) => user._id) },
+        });
+      }
+      const confirmationText = session.targetUserId
+        ? `Xabar ${session.targetUserId} ID’li foydalanuvchiga yuborilsinmi?`
+        : `Xabar ${recipientCount} ta foydalanuvchiga yuborilsinmi?`;
       await ctx.reply(
-        `👁 Preview yuqorida ko‘rsatildi.\n\nXabar ${recipientCount} ta foydalanuvchiga yuborilsinmi?${session.mediaMessageId ? '\nMedia, izoh va tugmalar bitta xabar sifatida yuboriladi.' : '\nMatn va tugmalar bitta xabar sifatida yuboriladi.'}`,
+        `👁 Preview yuqorida ko‘rsatildi.\n\n${confirmationText}${session.mediaMessageId ? '\nMedia, izoh va tugmalar bitta xabar sifatida yuboriladi.' : '\nMatn va tugmalar bitta xabar sifatida yuboriladi.'}`,
         Markup.inlineKeyboard([[
           callbackButton('✅ Tasdiqlab yuborish', 'broadcast:send', 'success'),
           callbackButton('❌ Bekor qilish', 'broadcast:cancel', 'danger'),
         ]]),
       );
     } catch (error) {
-      console.error(`Broadcast preview for admin ${adminId} failed:`, error);
+      console.error(`Message preview for admin ${adminId} failed:`, error);
       await ctx.reply(`Xabar preview’ini ko‘rsatib bo‘lmadi: ${error.message}\nTugmalarni sozlash bosqichidan qayta urinib ko‘ring yoki /cancel yozing.`);
     }
     return;
@@ -2927,7 +2955,7 @@ bot.action(/^broadcast:(.+)$/, async (ctx) => {
     try {
       await deliverBroadcast(ctx, session);
     } catch (error) {
-      console.error(`Broadcast by admin ${adminId} could not be completed:`, error);
+      console.error(`Message delivery by admin ${adminId} could not be completed:`, error);
       await ctx.reply(`Xabar yuborish jarayonida xatolik yuz berdi: ${error.message}`);
     }
     return;
@@ -3055,6 +3083,28 @@ bot.action(/^admin:(.+)$/, async (ctx) => {
       ctx,
       `${customEmojiTag(MESSAGE_EMOJI_IDS.search, '👤')} Qidirmoqchi bo‘lgan foydalanuvchining raqamli Telegram ID’sini yuboring. Bekor qilish: /cancel`,
       { parse_mode: 'HTML' },
+    );
+    return;
+  }
+  if (action.startsWith('user_message:')) {
+    const userId = action.slice('user_message:'.length);
+    if (!/^\d{1,20}$/.test(userId) || !Number.isSafeInteger(Number(userId)) || Number(userId) < 1) {
+      await ctx.answerCbQuery('Telegram ID noto‘g‘ri.', { show_alert: true });
+      return;
+    }
+    const normalizedUserId = String(Number(userId));
+    if (!await collections.campaignUsers.findOne({ _id: normalizedUserId }, { projection: { _id: 1 } })) {
+      await ctx.answerCbQuery('Foydalanuvchi botda qayd etilmagan.', { show_alert: true });
+      return;
+    }
+    await ctx.answerCbQuery();
+    ownerSessions.set(String(ctx.from.id), {
+      action: 'broadcast_media',
+      targetUserId: normalizedUserId,
+    });
+    await ctx.reply(
+      `<tg-emoji emoji-id="${MESSAGE_EMOJI_IDS.broadcastMedia}">🖼</tg-emoji> ${normalizedUserId} ID’li foydalanuvchiga yuboriladigan rasm, video yoki GIF’ni yuboring. Media shart emas:`,
+      { ...broadcastStartKeyboard(), parse_mode: 'HTML' },
     );
     return;
   }
