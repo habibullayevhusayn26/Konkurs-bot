@@ -1492,14 +1492,21 @@ async function showOwnerPanel(ctx, edit = false) {
   }
 }
 
-function broadcastOptionsKeyboard(buttonCount) {
-  const rows = [];
-  if (buttonCount < 10) {
-    rows.push([callbackButton('➕ Inline tugma qo‘shish', 'broadcast:add', 'success')]);
-  }
-  rows.push([callbackButton('✅ Tugmalarni yakunlash', 'broadcast:finish')]);
-  rows.push([callbackButton('❌ Bekor qilish', 'broadcast:cancel', 'danger')]);
-  return Markup.inlineKeyboard(rows);
+function broadcastStartKeyboard() {
+  return Markup.inlineKeyboard([
+    [callbackButton('⏭ Mediasiz davom etish', 'broadcast:skip_media')],
+    [callbackButton('❌ Bekor qilish', 'broadcast:cancel', 'danger')],
+  ]);
+}
+
+function broadcastButtonChoiceKeyboard(buttonCount) {
+  return Markup.inlineKeyboard([
+    ...(buttonCount < 10
+      ? [[callbackButton(buttonCount ? '➕ Ha, yana tugma qo‘shaman' : '➕ Ha, inline tugma qo‘shaman', 'broadcast:add', 'success')]]
+      : []),
+    [callbackButton(buttonCount ? '✅ Yo‘q, tugmalar tayyor' : '⏭ Yo‘q, tugmasiz davom etish', 'broadcast:finish')],
+    [callbackButton('❌ Bekor qilish', 'broadcast:cancel', 'danger')],
+  ]);
 }
 
 function broadcastButtonTypeKeyboard() {
@@ -1660,12 +1667,18 @@ async function handleBroadcastAdminInput(ctx, session) {
   if (session.action === 'broadcast_media') {
     if (/^\/skip(?:@\w+)?(?:\s|$)/i.test((message.text || '').trim())) {
       ownerSessions.set(adminId, { action: 'broadcast_text', sourceChatId: ctx.chat.id });
-      await ctx.reply('Endi foydalanuvchilarga yuboriladigan matnni yuboring. Telegram formatlashi va premium emoji saqlanadi. /cancel');
+      await ctx.reply(
+        '<tg-emoji emoji-id="5393314064220843793">💬</tg-emoji> Xabar matnini yuboring. Premium emoji foydalanishingiz mumkin:',
+        { parse_mode: 'HTML' },
+      );
       return true;
     }
     if (!message.photo && !message.video && !message.animation && !message.document
       && !message.audio && !message.voice && !message.video_note && !message.sticker) {
-      await ctx.reply('Avval rasm, GIF, video, audio, voice, sticker yoki fayl yuboring. Mediasiz davom etish uchun /skip yozing.');
+      await ctx.reply(
+        '<tg-emoji emoji-id="5350693961281314631">🖼</tg-emoji> Xabar uchun rasm, video yoki GIF yuboring. Media shart emas:',
+        { ...broadcastStartKeyboard(), parse_mode: 'HTML' },
+      );
       return true;
     }
     ownerSessions.set(adminId, {
@@ -1674,7 +1687,10 @@ async function handleBroadcastAdminInput(ctx, session) {
       mediaMessageId: message.message_id,
       mediaHasCaption: Boolean(message.caption),
     });
-    await ctx.reply('Media qabul qilindi. Endi alohida xabarda yuboriladigan matnni yuboring. Formatlash va premium emoji saqlanadi. /cancel');
+    await ctx.reply(
+      '<tg-emoji emoji-id="5393314064220843793">💬</tg-emoji> Xabar matnini yuboring. Premium emoji foydalanishingiz mumkin:',
+      { parse_mode: 'HTML' },
+    );
     return true;
   }
   if (session.action === 'broadcast_text') {
@@ -1688,7 +1704,10 @@ async function handleBroadcastAdminInput(ctx, session) {
       textMessageId: message.message_id,
       buttons: [],
     });
-    await ctx.reply('Matn qabul qilindi. Endi inline tugmalar qo‘shing yoki tugmalarsiz davom eting.', broadcastOptionsKeyboard(0));
+    await ctx.reply(
+      '<tg-emoji emoji-id="5215327492738392838">🔩</tg-emoji> Inline tugma qo\'shasizmi?',
+      { ...broadcastButtonChoiceKeyboard(0), parse_mode: 'HTML' },
+    );
     return true;
   }
   if (session.action === 'broadcast_button_text') {
@@ -2459,6 +2478,15 @@ bot.action(/^broadcast:(.+)$/, async (ctx) => {
     await ctx.answerCbQuery('Xabar yuborish sessiyasi topilmadi. Paneldan qayta boshlang.', { show_alert: true });
     return;
   }
+  if (action === 'skip_media' && session.action === 'broadcast_media') {
+    ownerSessions.set(adminId, { action: 'broadcast_text', sourceChatId: ctx.chat.id });
+    await ctx.answerCbQuery();
+    await ctx.reply(
+      '<tg-emoji emoji-id="5393314064220843793">💬</tg-emoji> Xabar matnini yuboring. Premium emoji foydalanishingiz mumkin:',
+      { parse_mode: 'HTML' },
+    );
+    return;
+  }
   if (action === 'add' && session.action === 'broadcast_options') {
     ownerSessions.set(adminId, { ...session, action: 'broadcast_button_text' });
     await ctx.answerCbQuery();
@@ -2510,7 +2538,10 @@ bot.action(/^broadcast:(.+)$/, async (ctx) => {
     const buttons = [...session.buttons, { ...session.button, style }];
     ownerSessions.set(adminId, { ...session, action: 'broadcast_options', buttons });
     await ctx.answerCbQuery('Tugma qo‘shildi.');
-    await ctx.reply(`Inline tugmalar sozlandi: ${buttons.length}/10. Yana tugma qo‘shing yoki yuborishni yakunlang.`, broadcastOptionsKeyboard(buttons.length));
+    await ctx.reply(
+      '<tg-emoji emoji-id="5215327492738392838">🔩</tg-emoji> Inline tugma qo\'shasizmi?',
+      { ...broadcastButtonChoiceKeyboard(buttons.length), parse_mode: 'HTML' },
+    );
     return;
   }
   if (action === 'finish' && session.action === 'broadcast_options') {
@@ -2709,7 +2740,8 @@ bot.action(/^admin:(.+)$/, async (ctx) => {
   } else if (action === 'broadcast') {
     ownerSessions.set(String(ctx.from.id), { action: 'broadcast_media' });
     await ctx.reply(
-      'Avval xabarga qo‘shiladigan media yoki faylni yuboring: rasm, GIF, video, audio, voice, sticker va boshqalar. Media kerak bo‘lmasa /skip yozing. /cancel',
+      '<tg-emoji emoji-id="5350693961281314631">🖼</tg-emoji> Xabar uchun rasm, video yoki GIF yuboring. Media shart emas:',
+      { ...broadcastStartKeyboard(), parse_mode: 'HTML' },
     );
   } else if (action === 'admins') {
     await renderAdmins(ctx, true);
