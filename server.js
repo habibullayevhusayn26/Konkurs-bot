@@ -1057,7 +1057,7 @@ function supportReplyKeyboard() {
 }
 
 async function showSupportReplyKeyboard(ctx) {
-  await ctx.reply(' ', supportReplyKeyboard());
+  await ctx.reply('\u2063', supportReplyKeyboard());
 }
 
 async function deliverSupportMessage(ctx) {
@@ -2648,7 +2648,10 @@ bot.use(async (ctx, next) => {
       }
     }
   }
-  if (admin && ctx.message && activeAdminSession
+  const isSupportUpdate = Boolean(ctx.message
+    && ((ctx.message.text || '').trim().toLocaleUpperCase() === 'SUPPORT'
+      || supportSessions.has(adminId)));
+  if (admin && ctx.message && activeAdminSession && !isSupportUpdate
     && (ctx.message.text || activeAdminSession.action.startsWith('broadcast_'))) {
     if (await handleAdminInput(ctx)) return;
   }
@@ -2676,7 +2679,7 @@ bot.use(async (ctx, next) => {
     }
     return;
   }
-  if (!admin && ctx.message) {
+  if (ctx.message) {
     const messageText = (ctx.message.text || '').trim();
     if (messageText.toLocaleUpperCase() === 'SUPPORT') {
       supportSessions.set(adminId, Date.now() + 15 * 60 * 1000);
