@@ -423,14 +423,27 @@ function startReferralPayload(ctx) {
   return match ? match[1] || '' : '';
 }
 
+function addPremiumButtonIcon(button, text) {
+  if (!/premium/i.test(text)) return button;
+  return {
+    ...button,
+    text: text.replace(/^(?:⭐️?\s*)+/u, ''),
+    icon_custom_emoji_id: PREMIUM_EMOJI_ID,
+  };
+}
+
 function callbackButton(text, data, style = 'primary') {
-  const label = /premium/i.test(text) ? `⭐️ ${text.replace(/^(?:⭐️?\s*)+/u, '')}` : text;
-  return { ...Markup.button.callback(label, data), style };
+  return {
+    ...addPremiumButtonIcon(Markup.button.callback(text, data), text),
+    style,
+  };
 }
 
 function urlButton(text, url) {
-  const label = /premium/i.test(text) ? `⭐️ ${text.replace(/^(?:⭐️?\s*)+/u, '')}` : text;
-  return { ...Markup.button.url(label, url), style: 'primary' };
+  return {
+    ...addPremiumButtonIcon(Markup.button.url(text, url), text),
+    style: 'primary',
+  };
 }
 
 function twoColumnKeyboard(rows) {
@@ -941,7 +954,7 @@ async function renderPrizes(ctx, edit = false) {
     callbackButton(`🗑 ${prize.display_name} · ${prize.referrals_cost || 1} ball`, `admin:prize_delete:${prize.admin_code}`, 'danger'),
   ]);
   rows.push([callbackButton('➕ NFT qo‘shish', 'admin:prize_add', 'success')]);
-  rows.push([callbackButton('⭐ Premium sovg‘a qo‘shish', 'admin:premium_add', 'success')]);
+  rows.push([callbackButton('Premium sovg‘a qo‘shish', 'admin:premium_add', 'success')]);
   rows.push([callbackButton('⬅️ Panelga qaytish', 'admin:panel')]);
   const text = prizes.length
     ? `Sovg‘alar katalogi (${prizes.length}):\n\n${prizes.map((prize, index) => `${index + 1}. ${prizeTypeLabel(prize)} — ${prize.referrals_cost || 1} referral ball${prize.telegram_url ? `\n${prize.telegram_url}` : ''}`).join('\n\n')}\n\nNFT va Premium sovg‘alari admin tomonidan qo‘lda topshiriladi.`
