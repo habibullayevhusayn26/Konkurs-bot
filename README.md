@@ -28,6 +28,7 @@ Bot va Mini App bir xil domen orqali xizmat qilishi kerak, chunki Mini App API s
 - Taklif faqat botning shaxsiy chatida ilgari qayd etilmagan yangi foydalanuvchi `/start` bosib, barcha majburiy kanallarga obuna bo‘lgach hisoblanadi.
 - Bir Telegram akkaunti faqat bir marta hisoblanadi; o‘zini taklif qilish hisoblanmaydi.
 - Har bir tasdiqlangan referral foydalanuvchi balansiga 1 ball qo‘shadi.
+- Referral kanal obunasini tasdiqlab hisoblangach, taklif qilgan foydalanuvchiga yangi foydalanuvchining Telegram profiliga ochiladigan ismтэй мэдэгдэл очно.
 - Botdagi **Bonuslar** bo‘limida bonus kanaliga obunani tekshirtirib bir marta 3 ball, so‘ng har 24 soatda 2 ball kunlik bonus olish mumkin. Bonus ballari referral ballari bilan birga sarflanadi.
 - Mini App va bot foydalanuvchiga balansni ko‘rish, referral havolasini ulashish hamda NFT yoki Telegram Premium sovg‘alariga so‘rov yuborish imkonini beradi. Bot buyruqlari: `/balance`, `/invite`, `/prizes` va `/bonus`.
 - Botdagi **Sotib olish** bo‘limida 3 oylik Premium 1000 Stars, 6 oylik 1500 Stars va 12 oylik 2500 Stars turadi. To‘lov Telegram Stars (XTR) orqali olinadi va muvaffaqiyatli to‘lovdan keyin `giftPremiumSubscription` orqali avtomatik topshiriladi.

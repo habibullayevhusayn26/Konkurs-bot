@@ -881,6 +881,16 @@ async function qualifyReferral(userId) {
     { upsert: true },
   );
   if (!result.upsertedCount) return;
+  const inviteeName = [user.first_name, user.last_name].filter(Boolean).join(' ') || 'Yangi foydalanuvchi';
+  const username = user.username ? `\nUsername: @${escapeHtml(user.username)}` : '';
+  const notification = `🎉 Referalingiz tasdiqlandi!\n\n`
+    + `Foydalanuvchi: <a href="tg://user?id=${encodeURIComponent(userId)}">${escapeHtml(inviteeName)}</a>`
+    + `${username}\nSizga +1 referral ball qo‘shildi.`;
+  try {
+    await sendText(bot.telegram, Number(user.referred_by), notification, { parse_mode: 'HTML' });
+  } catch (error) {
+    console.error(`Could not notify referrer ${user.referred_by} about confirmed referral ${userId}:`, error);
+  }
 }
 
 function startReferralPayload(ctx) {
