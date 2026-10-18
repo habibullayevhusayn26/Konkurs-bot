@@ -887,8 +887,8 @@ async function handleAdminInput(ctx) {
   }
   if (session.action === 'premium_months') {
     const months = Number(text.trim());
-    if (![3, 6, 12].includes(months)) {
-      await ctx.reply('Premium muddati 3, 6 yoki 12 oy bo‘lishi mumkin. Qayta kiriting yoki /cancel yozing.');
+    if (![1, 3, 6, 12].includes(months)) {
+      await ctx.reply('Premium muddati 1, 3, 6 yoki 12 oy bo‘lishi mumkin. Qayta kiriting yoki /cancel yozing.');
       return true;
     }
     const prize = {
@@ -1164,7 +1164,7 @@ bot.action(/^admin:(.+)$/, async (ctx) => {
     );
   } else if (action === 'premium_add') {
     ownerSessions.set(String(ctx.from.id), { action: 'premium_months' });
-    await ctx.reply('Telegram Premium obuna muddatini yuboring: 3, 6 yoki 12 oy. Keyin referral ball narxini belgilaysiz. Admin tasdiqlagach Premium’ni qo‘lda sovg‘a qiladi. Bekor qilish: /cancel');
+    await ctx.reply('Telegram Premium obuna muddatini yuboring: 1, 3, 6 yoki 12 oy. Keyin referral ball narxini belgilaysiz. Admin tasdiqlagach Premium’ni qo‘lda sovg‘a qiladi. Bekor qilish: /cancel');
   } else if (action.startsWith('gift_request_approve:') || action.startsWith('gift_request_reject:')) {
     const approve = action.startsWith('gift_request_approve:');
     const requestId = action.slice(approve
