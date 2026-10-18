@@ -363,12 +363,16 @@ function urlButton(text, url) {
   return { ...Markup.button.url(text, url), style: 'primary' };
 }
 
+function twoColumnKeyboard(rows) {
+  return Markup.inlineKeyboard(rows.flat(), { columns: 2 });
+}
+
 function subscriptionKeyboard(channels) {
   const rows = channels.map((channel) => [
     urlButton(`📢 ${channel.title || channel.channel_id}`, channel.invite_url),
   ]);
   rows.push([callbackButton('✅ Obunani tekshirish', 'subscription:check', 'success')]);
-  return Markup.inlineKeyboard(rows);
+  return twoColumnKeyboard(rows);
 }
 
 async function showSubscriptionPrompt(ctx) {
@@ -386,7 +390,7 @@ function mainMenuKeyboard() {
   rows.push([callbackButton('💰 Balansim', 'menu:balance', 'success')]);
   rows.push([callbackButton('🎁 Sovg‘alar va Premium', 'menu:prizes')]);
   rows.push([callbackButton('🔗 Do‘stni taklif qilish', 'menu:invite')]);
-  return Markup.inlineKeyboard(rows);
+  return twoColumnKeyboard(rows);
 }
 
 async function showWelcome(ctx) {
@@ -496,7 +500,7 @@ async function createGiftRequest(telegramUser, prizeId) {
     `Yangi ${giftRequest.prize_type === 'premium' ? 'Telegram Premium' : 'NFT'} sovg‘a so‘rovi\n\n`
       + `Foydalanuvchi: ${requester}\nTelegram ID: ${userId}\nSovg‘a: ${prizeTypeLabel(giftRequest)}\n`
       + `Narxi: ${referralsCost} referral ball\nTasdiqlangach sovg‘ani foydalanuvchiga qo‘lda topshiring.`,
-    Markup.inlineKeyboard(keyboardRows),
+    twoColumnKeyboard(keyboardRows),
   );
   return { giftRequest, referralBalance: referralBalance - referralsCost, notified };
 }
@@ -517,7 +521,7 @@ async function showInviteLink(ctx) {
   const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(stats.botLink)}&text=${encodeURIComponent('Botga qo‘shiling va referral kampaniyasida qatnashing.')}`;
   await ctx.reply(
     `🔗 Do‘stlaringizga ushbu taklif havolasini yuboring:\n\n${stats.botLink}\n\nDo‘stingiz botni ishga tushirib, majburiy kanallarga obuna bo‘lgach 1 ball olasiz.`,
-    Markup.inlineKeyboard([
+    twoColumnKeyboard([
       [urlButton('📤 Do‘stga ulashish', shareUrl)],
       [callbackButton('⬅️ Bosh menyu', 'menu:home')],
     ]),
@@ -537,7 +541,7 @@ async function showPrizeMenu(ctx) {
   const text = prizes.length
     ? '🎁 Yutish mumkin bo‘lgan sovg‘alar:\n\nHar bir sovg‘ani tanlab so‘rov yuboring. Admin tasdiqlagach NFT yoki Premium obunasini qo‘lda topshiradi.'
     : 'Hozircha sovg‘alar qo‘shilmagan. Keyinroq qayta tekshiring.';
-  await ctx.reply(text, Markup.inlineKeyboard(rows));
+  await ctx.reply(text, twoColumnKeyboard(rows));
 }
 
 function sendJson(res, status, value) {
@@ -710,7 +714,7 @@ function ownerPanelKeyboard(includeAdminManagement = false) {
     [callbackButton('📢 Majburiy obuna kanallari', 'admin:channels')],
   ];
   if (includeAdminManagement) rows.push([callbackButton('👥 Adminlarni boshqarish', 'admin:admins')]);
-  return Markup.inlineKeyboard(rows);
+  return twoColumnKeyboard(rows);
 }
 
 async function showOwnerPanel(ctx, edit = false) {
@@ -734,9 +738,9 @@ async function renderAdmins(ctx, edit = false) {
     ? `👥 Qo‘shimcha adminlar (${admins.length}):\n${admins.map((admin) => `• ${admin._id}`).join('\n')}\n\nBot egasining huquqlari alohida va o‘zgarmaydi.`
     : '👥 Hozircha qo‘shimcha admin yo‘q. Bot egasi barcha admin huquqlarini saqlab qoladi.';
   if (edit && ctx.callbackQuery && ctx.callbackQuery.message) {
-    await ctx.editMessageText(text, Markup.inlineKeyboard(rows));
+    await ctx.editMessageText(text, twoColumnKeyboard(rows));
   } else {
-    await ctx.reply(text, Markup.inlineKeyboard(rows));
+    await ctx.reply(text, twoColumnKeyboard(rows));
   }
 }
 
@@ -755,9 +759,9 @@ async function renderChannels(ctx, edit = false) {
     ? `📢 Majburiy obuna kanallari (${channels.length}):\n${channels.map((channel) => `• ${channel.title} — ${channel.channel_id}`).join('\n')}`
     : '📢 Majburiy obuna kanallari qo‘shilmagan.';
   if (edit && ctx.callbackQuery && ctx.callbackQuery.message) {
-    await ctx.editMessageText(text, Markup.inlineKeyboard(rows));
+    await ctx.editMessageText(text, twoColumnKeyboard(rows));
   } else {
-    await ctx.reply(text, Markup.inlineKeyboard(rows));
+    await ctx.reply(text, twoColumnKeyboard(rows));
   }
 }
 
@@ -782,9 +786,9 @@ async function renderPrizes(ctx, edit = false) {
     ? `Sovg‘alar katalogi (${prizes.length}):\n\n${prizes.map((prize, index) => `${index + 1}. ${prizeTypeLabel(prize)} — ${prize.referrals_cost || 1} referral ball${prize.telegram_url ? `\n${prize.telegram_url}` : ''}`).join('\n\n')}\n\nNFT va Premium sovg‘alari admin tomonidan qo‘lda topshiriladi.`
     : '🎁 Hozircha sovg‘alar qo‘shilmagan. NFT havolasini yoki Telegram Premium obuna muddatini qo‘shing.';
   if (edit && ctx.callbackQuery && ctx.callbackQuery.message) {
-    await ctx.editMessageText(text, Markup.inlineKeyboard(rows));
+    await ctx.editMessageText(text, twoColumnKeyboard(rows));
   } else {
-    await ctx.reply(text, Markup.inlineKeyboard(rows));
+    await ctx.reply(text, twoColumnKeyboard(rows));
   }
 }
 
@@ -804,9 +808,9 @@ async function showPendingRewards(ctx, edit = false) {
   ]);
   rows.push([callbackButton('⬅️ Panelga qaytish', 'admin:panel')]);
   if (edit && ctx.callbackQuery && ctx.callbackQuery.message) {
-    await ctx.editMessageText(text, Markup.inlineKeyboard(rows));
+    await ctx.editMessageText(text, twoColumnKeyboard(rows));
   } else {
-    await ctx.reply(text, Markup.inlineKeyboard(rows));
+    await ctx.reply(text, twoColumnKeyboard(rows));
   }
 }
 
@@ -827,9 +831,9 @@ async function showGiftRequests(ctx, edit = false) {
   ]);
   rows.push([callbackButton('Panelga qaytish', 'admin:panel')]);
   if (edit && ctx.callbackQuery && ctx.callbackQuery.message) {
-    await ctx.editMessageText(text, Markup.inlineKeyboard(rows));
+    await ctx.editMessageText(text, twoColumnKeyboard(rows));
   } else {
-    await ctx.reply(text, Markup.inlineKeyboard(rows));
+    await ctx.reply(text, twoColumnKeyboard(rows));
   }
 }
 
@@ -1144,7 +1148,7 @@ bot.action(/^admin:(.+)$/, async (ctx) => {
       `Eski mukofot so‘rovlari: ${pending}`,
       `Eski topshirilgan mukofotlar: ${delivered}`,
     ].join('\n');
-    await ctx.editMessageText(text, Markup.inlineKeyboard([
+    await ctx.editMessageText(text, twoColumnKeyboard([
       [callbackButton('🔄 Yangilash', 'admin:stats')],
       [callbackButton('⬅️ Panelga qaytish', 'admin:panel')],
     ]));
