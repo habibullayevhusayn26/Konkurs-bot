@@ -1049,10 +1049,7 @@ function supportReplyKeyboard() {
 }
 
 async function showSupportReplyKeyboard(ctx) {
-  await ctx.reply(
-    'Yordam kerak bo‘lsa, pastdagi SUPPORT tugmasini bosing.',
-    supportReplyKeyboard(),
-  );
+  await ctx.reply(' ', supportReplyKeyboard());
 }
 
 async function deliverSupportMessage(ctx) {
