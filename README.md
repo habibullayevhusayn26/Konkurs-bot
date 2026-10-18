@@ -54,7 +54,7 @@ Bot egasi yoki qo‘shimcha admin shaxsiy chatda `/admin` yuboradi:
 - **Foydalanuvchini qidirish** — Telegram ID orqali foydalanuvchini topib, uning referral balansiga ball qo‘shish yoki yetarli balans bo‘lsa ayirish mumkin.
 - **Telegram Premium sovg‘asi** — 1, 3, 6 yoki 12 oylik Premium mukofot qo‘shib, referral ball narxini belgilang. Tasdiqlangan Premium so‘rovini admin Telegram orqali qo‘lda sovg‘a qiladi.
 - **Majburiy obuna kanallari** — kanal qo‘shish, tahrirlash yoki o‘chirish. Obunani tekshirish uchun bot kanal administratori bo‘lishi kerak.
-- **Bonuslar va promokodlar** — bonus uchun alohida kanal ulash, promokod beradigan ball va foydalanish limitini belgilash. Yaratilgan kod bonus kanaliga user botni ochib kodni avtomatik faollashtiradigan inline tugma bilan yuboriladi. Bot bonus kanalida administrator bo‘lishi kerak.
+- **Bonuslar va promokodlar** — bonus uchun alohida kanal ulash, promokod beradigan ball va foydalanish limitini belgilash. Kanal postida qolgan foydalanishlar soni ko‘rsatiladi va har bir muvaffaqiyatli ishlatilganda yangilanadi; limit tugaganda ishlatish tugmasi olib tashlanadi. Promokod havolasini ochgan foydalanuvchiga odatiy `/start` xabari o‘rniga promokod natijasi yuboriladi. Bot bonus kanalida administrator bo‘lishi kerak.
 - **Adminlarni boshqarish** — faqat bot egasi qo‘shimcha adminlarni raqamli Telegram ID orqali qo‘shishi yoki olib tashlashi mumkin. Qo‘shimcha adminlar so‘rovlarni ko‘rib chiqadi va boshqa admin bo‘limlaridan foydalanadi; bot egasining huquqi saqlanib qoladi.
 
 `OWNER_ID` raqamli Telegram user ID bo‘lishi kerak. Ommaviy kanal username’ini (`@kanal`) yoki yopiq kanal uchun `-100... https://t.me/+invite` ko‘rinishida kiriting.

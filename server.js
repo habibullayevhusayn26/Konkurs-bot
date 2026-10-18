@@ -352,41 +352,84 @@ async function saveBonusChannel(ctx, rawText) {
   );
 }
 
-async function markPromoPostExhausted(promoId) {
-  const now = new Date();
-  const promo = await collections.promos.findOneAndUpdate(
-    {
-      _id: promoId,
-      channel_message_id: { $exists: true },
-      $expr: { $gte: ['$used_count', '$max_uses'] },
-      $or: [
-        { completion_posted_at: { $exists: false }, completion_editing_at: { $exists: false } },
-        { completion_editing_at: { $lte: new Date(now.getTime() - 2 * 60 * 1000) } },
-      ],
-    },
-    { $set: { active: false, completion_editing_at: now } },
-    { returnDocument: 'after', includeResultMetadata: false },
-  );
-  if (!promo) return;
-  const postText = `${promo.post_text}\n\n${customEmojiTag(MESSAGE_EMOJI_IDS.checkSubscription, '✅')} <b>PROMOKOD ISHLATILDI</b>`;
-  try {
-    await bot.telegram.editMessageText(
-      promo.channel_id,
-      promo.channel_message_id,
-      undefined,
-      postText,
-      { parse_mode: 'HTML', reply_markup: { inline_keyboard: [] } },
+function promoPostText(promo) {
+  const remaining = Math.max(0, promo.max_uses - promo.used_count);
+  const availability = `\nQolgan foydalanishlar: <b>${remaining}</b>`;
+  const exhausted = remaining === 0
+    ? `\n\n${customEmojiTag(MESSAGE_EMOJI_IDS.checkSubscription, '✅')} <b>PROMOKOD ISHLATILDI</b>`
+    : '';
+  return `${promo.post_text}${availability}${exhausted}`;
+}
+
+function promoPostKeyboard(promo) {
+  if (promo.used_count >= promo.max_uses || !promo.active) {
+    return { reply_markup: { inline_keyboard: [] } };
+  }
+  return Markup.inlineKeyboard([[
+    urlButton('Promokodni ishlatish', `https://t.me/${botUsername}?start=promo_${promo._id}`),
+  ]]);
+}
+
+async function syncPromoPost(promoId) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const now = new Date();
+    const promo = await collections.promos.findOneAndUpdate(
+      {
+        _id: promoId,
+        channel_message_id: { $exists: true },
+        $and: [
+          {
+            $or: [
+              { post_synced_count: { $exists: false } },
+              { $expr: { $ne: ['$post_synced_count', '$used_count'] } },
+            ],
+          },
+          {
+            $or: [
+              { post_editing_at: { $exists: false } },
+              { post_editing_at: { $lte: new Date(now.getTime() - 2 * 60 * 1000) } },
+            ],
+          },
+        ],
+      },
+      { $set: { post_editing_at: now } },
+      { returnDocument: 'after', includeResultMetadata: false },
     );
-    await collections.promos.updateOne(
-      { _id: promoId, completion_editing_at: now },
-      { $set: { completion_posted_at: new Date() }, $unset: { completion_editing_at: '' } },
-    );
-  } catch (error) {
-    await collections.promos.updateOne(
-      { _id: promoId, completion_editing_at: now },
-      { $unset: { completion_editing_at: '' }, $set: { completion_edit_error: error.message } },
-    );
-    console.error(`Could not mark exhausted promo ${promoId} in its channel post:`, error);
+    if (!promo) return;
+    const exhausted = promo.used_count >= promo.max_uses;
+    if (exhausted) {
+      await collections.promos.updateOne(
+        { _id: promoId },
+        { $set: { active: false } },
+      );
+      promo.active = false;
+    }
+    try {
+      await bot.telegram.editMessageText(
+        promo.channel_id,
+        promo.channel_message_id,
+        undefined,
+        promoPostText(promo),
+        { parse_mode: 'HTML', ...promoPostKeyboard(promo) },
+      );
+      await collections.promos.updateOne(
+        { _id: promoId, post_editing_at: now },
+        {
+          $set: {
+            post_synced_count: promo.used_count,
+            ...(exhausted ? { completion_posted_at: new Date() } : {}),
+          },
+          $unset: { post_editing_at: '', completion_edit_error: '' },
+        },
+      );
+    } catch (error) {
+      await collections.promos.updateOne(
+        { _id: promoId, post_editing_at: now },
+        { $unset: { post_editing_at: '' }, $set: { completion_edit_error: error.message } },
+      );
+      console.error(`Could not update promo ${promoId} channel post:`, error);
+      return;
+    }
   }
 }
 
@@ -396,7 +439,7 @@ async function redeemPromo(user, promoId) {
   const promo = await collections.promos.findOne({ _id: promoId });
   if (!promo) return { status: 'unavailable' };
   if (!promo.active && promo.used_count >= promo.max_uses) {
-    await markPromoPostExhausted(promoId);
+    await syncPromoPost(promoId);
     return { status: 'exhausted' };
   }
   const redemptionId = `${promoId}:${userId}`;
@@ -409,7 +452,7 @@ async function redeemPromo(user, promoId) {
       { $inc: { used_count: 1 } },
     );
     if (!reservation.modifiedCount) {
-      await markPromoPostExhausted(promoId);
+      await syncPromoPost(promoId);
       return { status: 'exhausted' };
     }
     try {
@@ -447,7 +490,7 @@ async function redeemPromo(user, promoId) {
       { _id: redemptionId },
       { $set: { status: 'awarded', awarded_at: new Date() } },
     );
-    await markPromoPostExhausted(promoId);
+    await syncPromoPost(promoId);
     return { status: 'already_redeemed' };
   }
   const credit = await collections.campaignUsers.updateOne(
@@ -461,7 +504,7 @@ async function redeemPromo(user, promoId) {
         { _id: redemptionId },
         { $set: { status: 'awarded', awarded_at: new Date() } },
       );
-      await markPromoPostExhausted(promoId);
+      await syncPromoPost(promoId);
       return { status: 'already_redeemed' };
     }
     throw new Error(`Could not credit promo ${promoId} to user ${userId}.`);
@@ -470,7 +513,7 @@ async function redeemPromo(user, promoId) {
     { _id: redemptionId },
     { $set: { status: 'awarded', awarded_at: new Date() } },
   );
-  await markPromoPostExhausted(promoId);
+  await syncPromoPost(promoId);
   return { status: 'awarded', points: redemption.points };
 }
 
@@ -1958,6 +2001,7 @@ async function handleAdminInput(ctx) {
       + `Kod: <code>${escapeHtml(promo.code)}</code>\n`
       + `Bonus: ${promo.points} ball\n`
       + `Foydalanish limiti: ${promo.max_uses} ta user`;
+    promo.post_text = postText;
     await collections.promos.updateOne(
       { _id: promo._id },
       { $set: { post_text: postText } },
@@ -1966,7 +2010,7 @@ async function handleAdminInput(ctx) {
     try {
       post = await bot.telegram.sendMessage(
         settings.channel_id,
-        postText,
+        promoPostText(promo),
         {
           parse_mode: 'HTML',
           ...Markup.inlineKeyboard([[
@@ -1988,7 +2032,13 @@ async function handleAdminInput(ctx) {
     try {
       await collections.promos.updateOne(
         { _id: promo._id },
-        { $set: { channel_message_id: post.message_id, posted_at: new Date() } },
+        {
+          $set: {
+            channel_message_id: post.message_id,
+            post_synced_count: promo.used_count,
+            posted_at: new Date(),
+          },
+        },
       );
     } catch (error) {
       console.error(`Promo ${promo._id} was posted but its message metadata could not be saved:`, error);
@@ -2286,7 +2336,6 @@ bot.catch((error, ctx) => {
 });
 
 bot.start(async (ctx) => {
-  await showWelcome(ctx);
   const match = /^promo_([a-f0-9]{24})$/i.exec(startReferralPayload(ctx));
   if (match) {
     const promoId = match[1].toLowerCase();
@@ -2295,7 +2344,9 @@ bot.start(async (ctx) => {
       { $unset: { pending_promo_id: '' } },
     );
     await reportPromoRedemption(ctx, promoId);
+    return;
   }
+  await showWelcome(ctx);
 });
 
 bot.on('pre_checkout_query', validatePremiumPreCheckout);
@@ -2650,15 +2701,17 @@ bot.action('subscription:check', async (ctx) => {
     await ctx.answerCbQuery('✅ Obuna tasdiqlandi.');
     const userId = String(ctx.from.id);
     const account = await collections.campaignUsers.findOne({ _id: userId });
+    let promoPending = false;
     if (account && account.pending_promo_id) {
       const promoId = account.pending_promo_id;
+      promoPending = true;
       await collections.campaignUsers.updateOne(
         { _id: userId, pending_promo_id: promoId },
         { $unset: { pending_promo_id: '' } },
       );
       await reportPromoRedemption(ctx, promoId);
     }
-    await showWelcome(ctx);
+    if (!promoPending) await showWelcome(ctx);
   } catch (error) {
     console.error(`Failed to check required-channel subscription for ${ctx.from.id}:`, error);
     await ctx.answerCbQuery('⚠️ Obunani tekshirib bo‘lmadi. Keyinroq qayta urinib ko‘ring.', { show_alert: true });
