@@ -52,6 +52,9 @@ if (WEB_APP_URL) {
 const mongoClient = new MongoClient(MONGODB_URI);
 const bot = new Telegraf(BOT_TOKEN);
 const ownerSessions = new Map();
+const supportSessions = new Map();
+const SUPPORT_BUTTON_EMOJI_ID = '5116275208906343429';
+const SUPPORT_PROMPT_EMOJI_ID = '4915853119839011973';
 let collections;
 let botUsername;
 
@@ -147,13 +150,26 @@ async function getAdminIds() {
   return [...new Set([OWNER_ID, ...admins.map((admin) => admin._id)].filter(Boolean))];
 }
 
-async function notifyAdmins(text, keyboard, options = {}) {
+async function pinAdminMessage(chatId, messageId, context) {
+  try {
+    await bot.telegram.pinChatMessage(Number(chatId), messageId, { disable_notification: true });
+  } catch (error) {
+    console.error(`Could not pin ${context} message ${messageId} in admin chat ${chatId}:`, error);
+  }
+}
+
+async function notifyAdmins(text, keyboard, options = {}, pinMessage = false) {
   const adminIds = await getAdminIds();
   text = stripBotEmojis(text, options);
   const message = telegramMessage(text, options);
   const results = await Promise.all(adminIds.map(async (adminId) => {
     try {
-      await bot.telegram.sendMessage(Number(adminId), message.text, { ...(keyboard || {}), ...message.options });
+      const sentMessage = await bot.telegram.sendMessage(
+        Number(adminId),
+        message.text,
+        { ...(keyboard || {}), ...message.options },
+      );
+      if (pinMessage) await pinAdminMessage(adminId, sentMessage.message_id, 'admin notification');
       return true;
     } catch (error) {
       console.error(`Could not notify admin ${adminId}:`, error);
@@ -996,6 +1012,7 @@ async function showSubscriptionPrompt(ctx) {
     '📣',
   );
   await replyText(ctx, text, { ...subscriptionKeyboard(await getRequiredChannels()), parse_mode: 'HTML' });
+  await showSupportReplyKeyboard(ctx);
 }
 
 function mainMenuKeyboard() {
@@ -1021,6 +1038,68 @@ function mainMenuKeyboard() {
   return twoColumnKeyboard(rows);
 }
 
+function supportReplyKeyboard() {
+  return Markup.keyboard([[
+    {
+      text: 'SUPPORT',
+      icon_custom_emoji_id: SUPPORT_BUTTON_EMOJI_ID,
+      style: 'danger',
+    },
+  ]]).resize().persistent();
+}
+
+async function showSupportReplyKeyboard(ctx) {
+  await ctx.reply(
+    'Yordam kerak bo‘lsa, pastdagi SUPPORT tugmasini bosing.',
+    supportReplyKeyboard(),
+  );
+}
+
+async function deliverSupportMessage(ctx) {
+  const userId = String(ctx.from.id);
+  const displayName = [ctx.from.first_name, ctx.from.last_name].filter(Boolean).join(' ') || 'Foydalanuvchi';
+  const userLink = `<a href="tg://user?id=${userId}">${escapeHtml(displayName)}</a>`;
+  const username = ctx.from.username ? `\nUsername: @${escapeHtml(ctx.from.username)}` : '';
+  const adminIds = await getAdminIds();
+  const results = await Promise.all(adminIds.map(async (adminId) => {
+    try {
+      await bot.telegram.sendMessage(
+        Number(adminId),
+        `Yangi SUPPORT xabari\n\nFoydalanuvchi: ${userLink}${username}\nTelegram ID: <code>${userId}</code>`,
+        { parse_mode: 'HTML' },
+      );
+      let deliveredMessage;
+      try {
+        deliveredMessage = await bot.telegram.forwardMessage(
+          Number(adminId),
+          ctx.chat.id,
+          ctx.message.message_id,
+        );
+      } catch (forwardError) {
+        try {
+          deliveredMessage = await bot.telegram.copyMessage(
+            Number(adminId),
+            ctx.chat.id,
+            ctx.message.message_id,
+          );
+        } catch (copyError) {
+          console.error(`Could not forward or copy SUPPORT message from ${userId} to admin ${adminId}:`, {
+            forwardError,
+            copyError,
+          });
+          return false;
+        }
+      }
+      await pinAdminMessage(adminId, deliveredMessage.message_id, 'SUPPORT');
+      return true;
+    } catch (error) {
+      console.error(`Could not deliver SUPPORT message from ${userId} to admin ${adminId}:`, error);
+      return false;
+    }
+  }));
+  return results.filter(Boolean).length;
+}
+
 async function showWelcome(ctx) {
   const message = WEB_APP_URL
     ? 'Salom! Referral ball to‘plang va NFT yoki Telegram Premium yutib oling. Barcha imkoniyatlar bot ichida ham mavjud:'
@@ -1030,6 +1109,7 @@ async function showWelcome(ctx) {
     addMessageEmoji(message, 'Salom!', MESSAGE_EMOJI_IDS.greeting, '🙂'),
     { ...mainMenuKeyboard(), parse_mode: 'HTML' },
   );
+  await showSupportReplyKeyboard(ctx);
 }
 
 async function getCampaignStats(userId) {
@@ -1160,6 +1240,8 @@ async function createGiftRequest(telegramUser, prizeId) {
       + `Foydalanuvchi: ${requester}\nTelegram ID: ${userId}\nSovg‘a: ${prizeTypeLabel(giftRequest)}\n`
       + `Narxi: ${referralsCost} referral ball\nTasdiqlangach sovg‘ani foydalanuvchiga qo‘lda topshiring.`,
     twoColumnKeyboard(keyboardRows),
+    {},
+    true,
   );
   return { giftRequest, referralBalance: referralBalance - referralsCost, notified };
 }
@@ -2580,6 +2662,29 @@ bot.use(async (ctx, next) => {
     }
     return;
   }
+  if (!admin && ctx.message) {
+    const messageText = (ctx.message.text || '').trim();
+    if (messageText.toLocaleUpperCase() === 'SUPPORT') {
+      supportSessions.set(adminId, Date.now() + 15 * 60 * 1000);
+      await ctx.reply(
+        `${customEmojiTag(SUPPORT_PROMPT_EMOJI_ID, '⚠️')} Xabaringizni yuboring. Matn, rasm va izoh, video, audio yoki uzatilgan xabarni yuborishingiz mumkin.`,
+        { parse_mode: 'HTML' },
+      );
+      return;
+    }
+    const supportExpiresAt = supportSessions.get(adminId);
+    if (supportExpiresAt && supportExpiresAt > Date.now()) {
+      supportSessions.delete(adminId);
+      const deliveredCount = await deliverSupportMessage(ctx);
+      if (deliveredCount > 0) {
+        await ctx.reply('Xabaringiz adminlarga yuborildi. Rahmat!');
+      } else {
+        await ctx.reply('Xabaringiz adminlarga yetkazilmadi. Keyinroq qayta urinib ko‘ring.');
+      }
+      return;
+    }
+    if (supportExpiresAt) supportSessions.delete(adminId);
+  }
   if (!admin && isStartCommand) {
     const match = /^promo_([a-f0-9]{24})$/i.exec(referralPayload);
     if (match) {
@@ -2636,6 +2741,7 @@ bot.start(async (ctx) => {
       { $unset: { pending_promo_id: '' } },
     );
     await reportPromoRedemption(ctx, promoId);
+    await showSupportReplyKeyboard(ctx);
     return;
   }
   await showWelcome(ctx);
