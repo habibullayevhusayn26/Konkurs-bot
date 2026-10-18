@@ -75,7 +75,6 @@ async function initializeDatabase() {
     previousRecipients: database.collection('bot_recipients'),
     broadcastButtons: database.collection('broadcast_buttons'),
     adminActivity: database.collection('admin_activity'),
-    pointTransactions: database.collection('point_transactions'),
   };
   await collections.referrals.createIndex({ inviter_id: 1 });
   await collections.rewards.createIndex({ status: 1, created_at: 1 });
@@ -92,7 +91,6 @@ async function initializeDatabase() {
   await collections.promos.createIndex({ code: 1 }, { unique: true });
   await collections.promoRedemptions.createIndex({ promo_id: 1, user_id: 1 }, { unique: true });
   await collections.adminActivity.createIndex({ created_at: -1 });
-  await collections.pointTransactions.createIndex({ user_id: 1, created_at: -1 });
 }
 
 async function logAdminAction(ctx, action, details, targetUserId = null) {
@@ -105,24 +103,6 @@ async function logAdminAction(ctx, action, details, targetUserId = null) {
     ...(targetUserId ? { target_user_id: String(targetUserId) } : {}),
     created_at: new Date(),
   });
-}
-
-async function recordPointTransaction({ id, userId, delta, type, details, actorId = null }) {
-  await collections.pointTransactions.updateOne(
-    { _id: id },
-    {
-      $setOnInsert: {
-        _id: id,
-        user_id: String(userId),
-        delta,
-        type,
-        details,
-        ...(actorId ? { actor_id: String(actorId) } : {}),
-        created_at: new Date(),
-      },
-    },
-    { upsert: true },
-  );
 }
 
 function isOwner(ctx) {
@@ -283,33 +263,6 @@ async function sendJournalImage(ctx, title, subtitle, entries, page, prefix, has
     return;
   }
   await ctx.replyWithPhoto({ source: photo, filename: 'journal.png' }, extra);
-}
-
-async function showPointHistory(ctx, page = 0) {
-  const userId = String(ctx.from.id);
-  const pageSize = 8;
-  const entries = await collections.pointTransactions.find({ user_id: userId })
-    .sort({ created_at: -1 })
-    .skip(page * pageSize)
-    .limit(pageSize + 1)
-    .toArray();
-  const hasNext = entries.length > pageSize;
-  const visible = entries.slice(0, pageSize).map((entry) => ({
-    title: entry.type,
-    details: entry.details,
-    delta: entry.delta,
-    date: new Date(entry.created_at).toLocaleString('uz-UZ'),
-  }));
-  await sendJournalImage(
-    ctx,
-    'Referral ballar tarixi',
-    `Telegram ID: ${userId}`,
-    visible,
-    page,
-    'menu:history',
-    hasNext,
-    'menu:balance',
-  );
 }
 
 async function showAdminActivity(ctx, page = 0) {
@@ -719,13 +672,6 @@ async function redeemPromo(user, promoId) {
         { _id: redemptionId },
         { $set: { status: 'awarded', awarded_at: new Date() } },
       );
-      await recordPointTransaction({
-        id: `promo:${promoId}:${userId}`,
-        userId,
-        delta: redemption.points,
-        type: 'Promokod bonusi',
-        details: `Promokod ${promo.code}`,
-      });
       await syncPromoPost(promoId);
       return { status: 'already_redeemed' };
     }
@@ -735,13 +681,6 @@ async function redeemPromo(user, promoId) {
     { _id: redemptionId },
     { $set: { status: 'awarded', awarded_at: new Date() } },
   );
-  await recordPointTransaction({
-    id: `promo:${promoId}:${userId}`,
-    userId,
-    delta: redemption.points,
-    type: 'Promokod bonusi',
-    details: `Promokod ${promo.code}`,
-  });
   await syncPromoPost(promoId);
   return { status: 'awarded', points: redemption.points };
 }
@@ -942,13 +881,6 @@ async function qualifyReferral(userId) {
     { upsert: true },
   );
   if (!result.upsertedCount) return;
-  await recordPointTransaction({
-    id: `referral:${userId}`,
-    userId: user.referred_by,
-    delta: 1,
-    type: 'Referral ball',
-    details: `Yangi taklif tasdiqlandi · ID ${userId}`,
-  });
 }
 
 function startReferralPayload(ctx) {
@@ -1089,7 +1021,6 @@ function mainMenuKeyboard() {
     }]);
   }
   rows.push([callbackButton('💰 Balansim', 'menu:balance', 'success')]);
-  rows.push([callbackButton('📜 Ballar tarixi', 'menu:history')]);
   rows.push([callbackButton('Sovg‘alar va Premium', 'menu:prizes')]);
   rows.push([callbackButton('👥 Do‘stni taklif qilish', 'menu:invite')]);
   rows.push([callbackButton('Sotib olish', 'purchase:home')]);
@@ -1222,13 +1153,6 @@ async function createGiftRequest(telegramUser, prizeId) {
     }
     throw error;
   }
-  await recordPointTransaction({
-    id: `gift-request:${giftRequest._id}`,
-    userId,
-    delta: -referralsCost,
-    type: 'Sovg‘a uchun ball band qilindi',
-    details: `${giftRequest.prize_display_name} · holati: ko‘rib chiqilmoqda`,
-  });
 
   const requester = `${giftRequest.first_name || 'Foydalanuvchi'}${giftRequest.username ? ` (@${giftRequest.username})` : ''}`;
   const keyboardRows = [[
@@ -1881,7 +1805,6 @@ function broadcastCommandKeyboard() {
     [callbackButton('/invite', 'broadcast:command:invite')],
     [callbackButton('/prizes', 'broadcast:command:prizes')],
     [callbackButton('/bonus', 'broadcast:command:bonus')],
-    [callbackButton('/history', 'broadcast:command:history')],
     [callbackButton('❌ Bekor qilish', 'broadcast:cancel', 'danger')],
   ]);
 }
@@ -2574,14 +2497,6 @@ async function handleAdminInput(ctx) {
         : 'Balansni yangilab bo‘lmadi: foydalanuvchi topilmadi.');
     } else {
       const delta = operation === 'add' ? amount : -amount;
-      await recordPointTransaction({
-        id: `admin-adjust:${crypto.randomUUID()}`,
-        userId,
-        delta,
-        type: 'Admin balans tuzatishi',
-        details: `Admin ${adminId} tomonidan qo‘lda ${delta > 0 ? 'qo‘shildi' : 'ayirildi'}`,
-        actorId: adminId,
-      });
       await logAdminAction(
         ctx,
         delta > 0 ? 'Balansga ball qo‘shildi' : 'Balansdan ball ayirildi',
@@ -2759,17 +2674,13 @@ bot.on('message', async (ctx, next) => {
 });
 
 bot.command('help', async (ctx) => {
-  await replyText(ctx, 'Botda /balance orqali ballaringizni ko‘ring, /history orqali ballar tarixini oching, /invite orqali taklif havolasini oling, /prizes orqali mukofotlarni ko‘ring va /bonus orqali bonuslarni oling. Yoki quyidagi menyudan foydalaning:', mainMenuKeyboard());
+  await replyText(ctx, 'Botda /balance orqali ballaringizni ko‘ring, /invite orqali taklif havolasini oling, /prizes orqali mukofotlarni ko‘ring va /bonus orqali bonuslarni oling. Yoki quyidagi menyudan foydalaning:', mainMenuKeyboard());
 });
 
 bot.command('balance', showBalance);
 bot.command('invite', showInviteLink);
 bot.command('prizes', showPrizeMenu);
 bot.command('bonus', showBonusMenu);
-bot.command('history', async (ctx) => {
-  await showPointHistory(ctx);
-});
-
 bot.action(/^purchase:(.+)$/, async (ctx) => {
   const action = ctx.match[1];
   if (action === 'home') {
@@ -2827,15 +2738,6 @@ bot.action(/^bonus:(.+)$/, async (ctx) => {
         { _id: userId, bonus_channel_claimed_at: { $exists: false } },
         { $inc: { bonus_points: 3 }, $set: { bonus_channel_claimed_at: new Date() } },
       );
-      if (result.modifiedCount) {
-        await recordPointTransaction({
-          id: `bonus-channel:${userId}`,
-          userId,
-          delta: 3,
-          type: 'Kanal bonusi',
-          details: 'Bonus kanaliga obuna tasdiqlandi',
-        });
-      }
       await ctx.answerCbQuery(
         result.modifiedCount ? 'Obuna tasdiqlandi: +3 ball!' : 'Kanalga obuna bonusi avval olingan.',
         { show_alert: true },
@@ -2861,13 +2763,6 @@ bot.action(/^bonus:(.+)$/, async (ctx) => {
       { $inc: { bonus_points: 2 }, $set: { daily_bonus_at: now } },
     );
     if (result.modifiedCount) {
-      await recordPointTransaction({
-        id: `daily-bonus:${userId}:${now.toISOString().slice(0, 10)}`,
-        userId,
-        delta: 2,
-        type: 'Kunlik bonus',
-        details: '24 soatlik bonus olindi',
-      });
       await ctx.answerCbQuery('Kunlik bonus olindi: +2 ball!', { show_alert: true });
     } else {
       const account = await collections.campaignUsers.findOne({ _id: userId });
@@ -2895,16 +2790,6 @@ bot.action(/^menu:(.+)$/, async (ctx) => {
   if (action === 'balance') {
     await ctx.answerCbQuery();
     await showBalance(ctx);
-    return;
-  }
-  if (action === 'history' || action.startsWith('history:')) {
-    const page = action === 'history' ? 0 : Number(action.slice('history:'.length));
-    if (!Number.isSafeInteger(page) || page < 0 || page > 10000) {
-      await ctx.answerCbQuery('Sahifa raqami noto‘g‘ri.', { show_alert: true });
-      return;
-    }
-    await ctx.answerCbQuery();
-    await showPointHistory(ctx, page);
     return;
   }
   if (action === 'invite') {
@@ -3006,7 +2891,7 @@ bot.action(/^broadcast:(.+)$/, async (ctx) => {
   }
   if (action.startsWith('command:') && session.action === 'broadcast_button_command') {
     const command = action.slice('command:'.length);
-    if (!['start', 'help', 'balance', 'invite', 'prizes', 'bonus', 'history'].includes(command)) {
+    if (!['start', 'help', 'balance', 'invite', 'prizes', 'bonus'].includes(command)) {
       await ctx.answerCbQuery('Bu buyruq qo‘llab-quvvatlanmaydi.', { show_alert: true });
       return;
     }
@@ -3102,14 +2987,13 @@ bot.action(/^bc:([a-f0-9]{24})$/, async (ctx) => {
     '/start': () => showWelcome(ctx),
     '/help': () => replyText(
       ctx,
-      'Botda /balance orqali ballaringizni ko‘ring, /history orqali ballar tarixini oching, /invite orqali taklif havolasini oling, /prizes orqali mukofotlarni ko‘ring va /bonus orqali bonuslarni oling. Yoki quyidagi menyudan foydalaning:',
+      'Botda /balance orqali ballaringizni ko‘ring, /invite orqali taklif havolasini oling, /prizes orqali mukofotlarni ko‘ring va /bonus orqali bonuslarni oling. Yoki quyidagi menyudan foydalaning:',
       mainMenuKeyboard(),
     ),
     '/balance': () => showBalance(ctx),
     '/invite': () => showInviteLink(ctx),
     '/prizes': () => showPrizeMenu(ctx),
     '/bonus': () => showBonusMenu(ctx),
-    '/history': () => showPointHistory(ctx),
   };
   const runCommand = commands[button.value];
   if (!runCommand) {
@@ -3407,20 +3291,6 @@ bot.action(/^admin:(.+)$/, async (ctx) => {
     if (!giftRequest) {
       await ctx.reply('Bu so‘rov avval ko‘rib chiqilgan yoki topilmadi.');
       return;
-    }
-    if (approve) {
-      await collections.pointTransactions.updateOne(
-        { _id: `gift-request:${giftRequest._id}` },
-        { $set: { type: 'Sovg‘a uchun ball sarflandi', details: giftRequest.prize_display_name } },
-      );
-    } else {
-      await recordPointTransaction({
-        id: `gift-refund:${giftRequest._id}`,
-        userId: giftRequest.user_id,
-        delta: giftRequest.referrals_cost,
-        type: 'Rad etilgan so‘rov ballari qaytarildi',
-        details: giftRequest.prize_display_name,
-      });
     }
     await logAdminAction(
       ctx,
