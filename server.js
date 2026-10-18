@@ -731,7 +731,7 @@ async function showPurchaseMenu(ctx, edit = false) {
     callbackButton(`Telegram Premium · ${months} oy · ${starCount} Stars`, `purchase:premium:${months}`, 'success'),
   ]);
   rows.push([callbackButton('Bosh menyu', 'menu:home')]);
-  const keyboard = twoColumnKeyboard(rows);
+  const keyboard = Markup.inlineKeyboard(rows.flat(), { columns: 1 });
   const text = 'Sotib olish\n\nTelegram Premium obunasini Stars orqali xarid qiling. To‘lov tasdiqlangach obuna avtomatik sovg‘a qilinadi.\n\n1 va 2 oylik obuna hamda foydalanuvchi hisobiga Stars yuborish Telegram Bot API’da mavjud emas.';
   if (edit && ctx.callbackQuery && ctx.callbackQuery.message) {
     await editText(ctx, text, keyboard);
