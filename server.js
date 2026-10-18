@@ -86,6 +86,7 @@ async function getAdminIds() {
 
 async function notifyAdmins(text, keyboard, options = {}) {
   const adminIds = await getAdminIds();
+  text = stripBotEmojis(text, options);
   const message = telegramMessage(text, options);
   const results = await Promise.all(adminIds.map(async (adminId) => {
     try {
@@ -110,9 +111,34 @@ function escapeHtml(value) {
 }
 
 const PREMIUM_EMOJI_ID = '5393380387105827492';
+const BOT_EMOJI_PATTERN = /(?:\p{Extended_Pictographic}(?:\uFE0F|\uFE0E)?\p{Emoji_Modifier}?(?:\u200D\p{Extended_Pictographic}(?:\uFE0F|\uFE0E)?\p{Emoji_Modifier}?)*)|(?:\p{Regional_Indicator}{2})|(?:[#*0-9]\uFE0F?\u20E3)/gu;
+
+function stripBotEmojis(value, options = {}) {
+  if (typeof value !== 'string') return value;
+  const premiumEmoji = options.entities
+    && options.entities.some((entity) => entity.type === 'custom_emoji' && entity.offset === 0 && entity.length === 2);
+  const prefix = premiumEmoji ? value.slice(0, 2) : '';
+  let text = premiumEmoji ? value.slice(2) : value;
+  const premiumTags = [];
+  text = text.replace(/<tg-emoji\b[^>]*>[\s\S]*?<\/tg-emoji>/gi, (tag) => {
+    const placeholder = `\u0000PREMIUM_EMOJI_${premiumTags.length}\u0000`;
+    premiumTags.push(tag);
+    return placeholder;
+  });
+  text = text
+    .replace(BOT_EMOJI_PATTERN, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/[ \t]+([,.;!?])/g, '$1');
+  text = text.replace(/\u0000PREMIUM_EMOJI_(\d+)\u0000/g, (_, index) => premiumTags[Number(index)]);
+  return prefix ? `${prefix}${text}` : text.trim();
+}
 
 function telegramMessage(text, options = {}) {
-  if (!/premium/i.test(text)) return { text, options };
+  text = stripBotEmojis(text, options);
+  const hasPremiumEmojiPrefix = options.entities
+    ? options.entities.some((entity) => entity.type === 'custom_emoji' && entity.offset === 0 && entity.length === 2)
+    : options.parse_mode === 'HTML' && /^<tg-emoji\b[^>]*>/.test(text);
+  if (!/premium/i.test(text) || hasPremiumEmojiPrefix) return { text, options };
   const existingEntities = options.entities || [];
   if (options.parse_mode === 'HTML') {
     return {
@@ -134,6 +160,7 @@ function telegramMessage(text, options = {}) {
 }
 
 async function replyText(ctx, text, extra) {
+  text = stripBotEmojis(text, extra || {});
   const message = telegramMessage(text, extra || {});
   if (!/premium/i.test(text)) {
     return extra === undefined ? ctx.reply(text) : ctx.reply(text, extra);
@@ -142,6 +169,7 @@ async function replyText(ctx, text, extra) {
 }
 
 async function editText(ctx, text, extra) {
+  text = stripBotEmojis(text, extra || {});
   const message = telegramMessage(text, extra || {});
   if (!/premium/i.test(text)) {
     return ctx.editMessageText(text, extra);
@@ -150,6 +178,7 @@ async function editText(ctx, text, extra) {
 }
 
 async function sendText(telegram, chatId, text, extra) {
+  text = stripBotEmojis(text, extra || {});
   const message = telegramMessage(text, extra || {});
   if (!/premium/i.test(text)) {
     return extra === undefined
@@ -423,25 +452,29 @@ function startReferralPayload(ctx) {
   return match ? match[1] || '' : '';
 }
 
-function addPremiumButtonIcon(button, text) {
-  if (!/premium/i.test(text)) return button;
+function addPremiumButtonIcon(button, isPremium) {
+  if (!isPremium) return button;
   return {
     ...button,
-    text: text.replace(/^(?:⭐️?\s*)+/u, ''),
+    text: button.text.replace(/^(?:⭐️?\s*)+/u, ''),
     icon_custom_emoji_id: PREMIUM_EMOJI_ID,
   };
 }
 
 function callbackButton(text, data, style = 'primary') {
+  const isPremium = /premium/i.test(text);
+  const label = stripBotEmojis(text).replace(/^(?:⭐️?\s*)+/u, '');
   return {
-    ...addPremiumButtonIcon(Markup.button.callback(text, data), text),
+    ...addPremiumButtonIcon(Markup.button.callback(label, data), isPremium),
     style,
   };
 }
 
 function urlButton(text, url) {
+  const isPremium = /premium/i.test(text);
+  const label = stripBotEmojis(text).replace(/^(?:⭐️?\s*)+/u, '');
   return {
-    ...addPremiumButtonIcon(Markup.button.url(text, url), text),
+    ...addPremiumButtonIcon(Markup.button.url(label, url), isPremium),
     style: 'primary',
   };
 }
@@ -468,7 +501,7 @@ async function showSubscriptionPrompt(ctx) {
 function mainMenuKeyboard() {
   const rows = [];
   if (WEB_APP_URL) {
-    rows.push([{ ...Markup.button.webApp('🎁 Mini Appni ochish', WEB_APP_URL), style: 'success' }]);
+    rows.push([{ ...Markup.button.webApp(stripBotEmojis('🎁 Mini Appni ochish'), WEB_APP_URL), style: 'success' }]);
   }
   rows.push([callbackButton('Balansim', 'menu:balance', 'success')]);
   rows.push([callbackButton('Sovg‘alar va Premium', 'menu:prizes')]);
@@ -1149,6 +1182,20 @@ async function handleAdminInput(ctx) {
 }
 
 bot.use(async (ctx, next) => {
+  const reply = ctx.reply.bind(ctx);
+  ctx.reply = (text, extra) => {
+    if (typeof text !== 'string') return reply(text, extra);
+    const message = telegramMessage(stripBotEmojis(text, extra || {}), extra || {});
+    return reply(message.text, message.options);
+  };
+  const editMessageText = ctx.editMessageText.bind(ctx);
+  ctx.editMessageText = (text, extra) => {
+    if (typeof text !== 'string') return editMessageText(text, extra);
+    const message = telegramMessage(stripBotEmojis(text, extra || {}), extra || {});
+    return editMessageText(message.text, message.options);
+  };
+  const answerCbQuery = ctx.answerCbQuery.bind(ctx);
+  ctx.answerCbQuery = (text, extra) => answerCbQuery(stripBotEmojis(text), extra);
   if (!ctx.chat || ctx.chat.type !== 'private' || !ctx.from) return;
   const adminId = String(ctx.from.id);
   const admin = await isAdmin(ctx);
@@ -1211,7 +1258,7 @@ bot.use(async (ctx, next) => {
 bot.catch((error, ctx) => {
   console.error(`Telegram update failed${ctx.update && ctx.update.update_id ? ` (${ctx.update.update_id})` : ''}:`, error);
   if (ctx.chat && ctx.chat.type === 'private' && ctx.message) {
-    ctx.reply('⚠️ Xatolik yuz berdi. Birozdan keyin qayta urinib ko‘ring.').catch((replyError) => {
+    ctx.reply('Xatolik yuz berdi. Birozdan keyin qayta urinib ko‘ring.').catch((replyError) => {
       console.error(`Failed to send error response to ${ctx.chat.id}:`, replyError);
     });
   }
