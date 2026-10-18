@@ -1011,13 +1011,9 @@ async function showBonusMenu(ctx) {
     collections.campaignUsers.findOne({ _id: userId }),
   ]);
   const rows = [];
-  if (settings) {
+  if (settings && !(profile && profile.bonus_channel_claimed_at)) {
     rows.push([urlButton('Bonus kanaliga obuna bo‘lish', settings.invite_url)]);
-    if (profile && profile.bonus_channel_claimed_at) {
-      rows.push([callbackButton('Obuna bonusi olindi', 'bonus:channel_claimed')]);
-    } else {
-      rows.push([callbackButton('Obunani tekshirish · +3 ball', 'bonus:channel')]);
-    }
+    rows.push([callbackButton('Obunani tekshirish · +3 ball', 'bonus:channel')]);
   }
   const nextDailyAt = profile && profile.daily_bonus_at
     ? new Date(profile.daily_bonus_at.getTime() + 24 * 60 * 60 * 1000)
