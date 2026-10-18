@@ -1148,14 +1148,27 @@ button:disabled {
 
 :root {
   color-scheme: dark;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", sans-serif;
   background: #000;
   color: #fff;
+  font-synthesis: none;
 }
 
 body,
 body * {
   background: #000 !important;
   color: #fff !important;
+  border-color: #3b4148 !important;
+  font-family: inherit !important;
+  font-weight: 600;
+}
+
+h1,
+h2,
+.brand-name,
+.balance-value,
+.gift-name {
+  font-weight: 800;
 }
 
 .brand-mark,
@@ -1180,7 +1193,7 @@ h1 span,
 .footer-privacy svg,
 .gift-dialog-cost,
 .privacy-note svg {
-  color: #ffd43b !important;
+  color: #39f43f !important;
 }
 
 .hero-link,
@@ -1190,16 +1203,21 @@ h1 span,
 .gift-card:focus-visible,
 .shop-toggle,
 .request-button {
-  border-color: #ffd43b !important;
+  border-color: #39f43f !important;
+}
+
+button:focus-visible,
+a:focus-visible {
+  outline-color: #39f43f !important;
 }
 
 .request-button {
-  background: #ffd43b !important;
+  background: #39f43f !important;
   color: #000 !important;
 }
 
 .request-button:hover:not(:disabled) {
-  background: #ffe477 !important;
+  background: #16c628 !important;
 }
 
 .gift-dialog::backdrop {
