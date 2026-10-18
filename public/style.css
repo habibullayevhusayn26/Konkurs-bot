@@ -1146,6 +1146,22 @@ button:disabled {
   display: block;
 }
 
+:root {
+  color-scheme: dark;
+  background: #000;
+  color: #fff;
+}
+
+body,
+body * {
+  background: #000 !important;
+  color: #fff !important;
+}
+
+.gift-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.85);
+}
+
 @keyframes gem-hover {
   0%, 100% { translate: 0 0; }
   50% { translate: 0 -8px; }

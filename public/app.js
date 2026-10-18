@@ -202,7 +202,8 @@ async function loadCampaign() {
   }
   telegram.ready();
   telegram.expand();
-  if (typeof telegram.setHeaderColor === 'function') telegram.setHeaderColor('#e3f3e6');
+  if (typeof telegram.setHeaderColor === 'function') telegram.setHeaderColor('#000000');
+  if (typeof telegram.setBackgroundColor === 'function') telegram.setBackgroundColor('#000000');
   try {
     const response = await fetch('/api/session', {
       method: 'POST',
