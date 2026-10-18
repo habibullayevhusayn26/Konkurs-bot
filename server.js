@@ -470,9 +470,9 @@ function mainMenuKeyboard() {
   if (WEB_APP_URL) {
     rows.push([{ ...Markup.button.webApp('🎁 Mini Appni ochish', WEB_APP_URL), style: 'success' }]);
   }
-  rows.push([callbackButton('💰 Balansim', 'menu:balance', 'success')]);
-  rows.push([callbackButton('🎁 Sovg‘alar va Premium', 'menu:prizes')]);
-  rows.push([callbackButton('🔗 Do‘stni taklif qilish', 'menu:invite')]);
+  rows.push([callbackButton('Balansim', 'menu:balance', 'success')]);
+  rows.push([callbackButton('Sovg‘alar va Premium', 'menu:prizes')]);
+  rows.push([callbackButton('Do‘stni taklif qilish', 'menu:invite')]);
   return twoColumnKeyboard(rows);
 }
 
