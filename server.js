@@ -1531,12 +1531,6 @@ function broadcastButtonStyleKeyboard() {
   ]]);
 }
 
-function hasBroadcastContent(message) {
-  return Boolean(message.text || message.caption || message.photo || message.video
-    || message.animation || message.document || message.audio || message.voice
-    || message.video_note || message.sticker);
-}
-
 function isBroadcastUrl(value) {
   try {
     const url = new URL(value);
@@ -1557,6 +1551,23 @@ function makeBroadcastButton(text, entities = []) {
   return {
     text: label,
     ...(customEmoji ? { icon_custom_emoji_id: customEmoji.custom_emoji_id } : {}),
+  };
+}
+
+function broadcastPreviewKeyboard(buttons) {
+  if (!buttons.length) return {};
+  return {
+    reply_markup: {
+      inline_keyboard: buttons.map((button) => {
+        const previewButton = {
+          text: button.text,
+          style: button.style,
+          ...(button.icon_custom_emoji_id ? { icon_custom_emoji_id: button.icon_custom_emoji_id } : {}),
+        };
+        if (button.type === 'url') return [{ ...previewButton, url: button.target }];
+        return [{ ...previewButton, callback_data: `bc:${crypto.randomBytes(12).toString('hex')}` }];
+      }),
+    },
   };
 }
 
@@ -1614,7 +1625,20 @@ async function deliverBroadcast(ctx, session) {
       continue;
     }
     try {
-      await bot.telegram.copyMessage(recipientId, session.sourceChatId, session.sourceMessageId, extra);
+      if (session.mediaMessageId) {
+        await bot.telegram.copyMessage(
+          recipientId,
+          session.sourceChatId,
+          session.mediaMessageId,
+          session.mediaHasCaption ? { caption: '' } : {},
+        );
+      }
+      await bot.telegram.copyMessage(
+        recipientId,
+        session.sourceChatId,
+        session.textMessageId,
+        extra,
+      );
       sent += 1;
     } catch (error) {
       failed += 1;
@@ -1633,21 +1657,38 @@ async function deliverBroadcast(ctx, session) {
 async function handleBroadcastAdminInput(ctx, session) {
   const adminId = String(ctx.from.id);
   const message = ctx.message;
-  if (session.action === 'broadcast_content') {
-    if (!hasBroadcastContent(message)) {
-      await ctx.reply('Matn, rasm, GIF, video, audio, voice yoki fayl xabarini yuboring. Formatlash Telegram’dan saqlanadi. Bekor qilish: /cancel');
+  if (session.action === 'broadcast_media') {
+    if (/^\/skip(?:@\w+)?(?:\s|$)/i.test((message.text || '').trim())) {
+      ownerSessions.set(adminId, { action: 'broadcast_text', sourceChatId: ctx.chat.id });
+      await ctx.reply('Endi foydalanuvchilarga yuboriladigan matnni yuboring. Telegram formatlashi va premium emoji saqlanadi. /cancel');
+      return true;
+    }
+    if (!message.photo && !message.video && !message.animation && !message.document
+      && !message.audio && !message.voice && !message.video_note && !message.sticker) {
+      await ctx.reply('Avval rasm, GIF, video, audio, voice, sticker yoki fayl yuboring. Mediasiz davom etish uchun /skip yozing.');
       return true;
     }
     ownerSessions.set(adminId, {
-      action: 'broadcast_options',
+      action: 'broadcast_text',
       sourceChatId: ctx.chat.id,
-      sourceMessageId: message.message_id,
+      mediaMessageId: message.message_id,
+      mediaHasCaption: Boolean(message.caption),
+    });
+    await ctx.reply('Media qabul qilindi. Endi alohida xabarda yuboriladigan matnni yuboring. Formatlash va premium emoji saqlanadi. /cancel');
+    return true;
+  }
+  if (session.action === 'broadcast_text') {
+    if (!message.text || !message.text.trim() || message.text.length > 4096) {
+      await ctx.reply('Yuboriladigan matnni yuboring (1–4096 belgi). Matn formatlashi va premium emoji saqlanadi.');
+      return true;
+    }
+    ownerSessions.set(adminId, {
+      ...session,
+      action: 'broadcast_options',
+      textMessageId: message.message_id,
       buttons: [],
     });
-    await ctx.reply(
-      'Xabar qabul qilindi. Inline tugmalar qo‘shishingiz yoki tugmalarsiz yuborishingiz mumkin.',
-      broadcastOptionsKeyboard(0),
-    );
+    await ctx.reply('Matn qabul qilindi. Endi inline tugmalar qo‘shing yoki tugmalarsiz davom eting.', broadcastOptionsKeyboard(0));
     return true;
   }
   if (session.action === 'broadcast_button_text') {
@@ -1687,7 +1728,8 @@ async function handleBroadcastAdminInput(ctx, session) {
     await ctx.reply('Tugma rangini tanlang:', broadcastButtonStyleKeyboard());
     return true;
   }
-  return false;
+  await ctx.reply('Davom etish uchun inline tugmalardan foydalaning. Jarayonni bekor qilish: /cancel');
+  return true;
 }
 
 async function renderAdmins(ctx, edit = false) {
@@ -2140,7 +2182,7 @@ bot.use(async (ctx, next) => {
   const adminId = String(ctx.from.id);
   const admin = await isAdmin(ctx);
   if (admin && ctx.message && ownerSessions.has(adminId)
-    && (ctx.message.text || ownerSessions.get(adminId).action === 'broadcast_content')) {
+    && ownerSessions.get(adminId).action.startsWith('broadcast_')) {
     if (await handleAdminInput(ctx)) return;
   }
 
@@ -2466,25 +2508,44 @@ bot.action(/^broadcast:(.+)$/, async (ctx) => {
       return;
     }
     const buttons = [...session.buttons, { ...session.button, style }];
-    ownerSessions.set(adminId, { action: 'broadcast_options', sourceChatId: session.sourceChatId, sourceMessageId: session.sourceMessageId, buttons });
+    ownerSessions.set(adminId, { ...session, action: 'broadcast_options', buttons });
     await ctx.answerCbQuery('Tugma qo‘shildi.');
     await ctx.reply(`Inline tugmalar sozlandi: ${buttons.length}/10. Yana tugma qo‘shing yoki yuborishni yakunlang.`, broadcastOptionsKeyboard(buttons.length));
     return;
   }
   if (action === 'finish' && session.action === 'broadcast_options') {
-    ownerSessions.set(adminId, { ...session, action: 'broadcast_confirm' });
-    const blockedUsers = await collections.blockedUsers.find().project({ _id: 1 }).toArray();
-    const recipientCount = await collections.campaignUsers.countDocuments({
-      _id: { $nin: blockedUsers.map((user) => user._id) },
-    });
     await ctx.answerCbQuery();
-    await ctx.reply(
-      `Ommaviy xabarni ${recipientCount} ta foydalanuvchiga yuborishga tayyormisiz?${session.buttons.length ? `\nInline tugmalar: ${session.buttons.length}` : '\nInline tugmalar: yo‘q'}`,
-      Markup.inlineKeyboard([[
-        callbackButton('✅ Tasdiqlab yuborish', 'broadcast:send', 'success'),
-        callbackButton('❌ Bekor qilish', 'broadcast:cancel', 'danger'),
-      ]]),
-    );
+    try {
+      if (session.mediaMessageId) {
+        await ctx.telegram.copyMessage(
+          ctx.chat.id,
+          session.sourceChatId,
+          session.mediaMessageId,
+          session.mediaHasCaption ? { caption: '' } : {},
+        );
+      }
+      await ctx.telegram.copyMessage(
+        ctx.chat.id,
+        session.sourceChatId,
+        session.textMessageId,
+        broadcastPreviewKeyboard(session.buttons),
+      );
+      ownerSessions.set(adminId, { ...session, action: 'broadcast_confirm' });
+      const blockedUsers = await collections.blockedUsers.find().project({ _id: 1 }).toArray();
+      const recipientCount = await collections.campaignUsers.countDocuments({
+        _id: { $nin: blockedUsers.map((user) => user._id) },
+      });
+      await ctx.reply(
+        `👁 Preview yuqorida ko‘rsatildi.\n\nXabar ${recipientCount} ta foydalanuvchiga yuborilsinmi?${session.mediaMessageId ? '\nMedia va matn ketma-ket yuboriladi.' : '\nFaqat matn yuboriladi.'}`,
+        Markup.inlineKeyboard([[
+          callbackButton('✅ Tasdiqlab yuborish', 'broadcast:send', 'success'),
+          callbackButton('❌ Bekor qilish', 'broadcast:cancel', 'danger'),
+        ]]),
+      );
+    } catch (error) {
+      console.error(`Broadcast preview for admin ${adminId} failed:`, error);
+      await ctx.reply(`Xabar preview’ini ko‘rsatib bo‘lmadi: ${error.message}\nTugmalarni sozlash bosqichidan qayta urinib ko‘ring yoki /cancel yozing.`);
+    }
     return;
   }
   if (action === 'send' && session.action === 'broadcast_confirm') {
@@ -2646,9 +2707,9 @@ bot.action(/^admin:(.+)$/, async (ctx) => {
   if (action === 'panel') {
     await showOwnerPanel(ctx, true);
   } else if (action === 'broadcast') {
-    ownerSessions.set(String(ctx.from.id), { action: 'broadcast_content' });
+    ownerSessions.set(String(ctx.from.id), { action: 'broadcast_media' });
     await ctx.reply(
-      'Foydalanuvchilarga yuboriladigan xabarni yuboring: matn yoki media (rasm, GIF, video, audio, voice, fayl va boshqalar). Telegram’dagi formatlash va premium emoji saqlanadi. /cancel',
+      'Avval xabarga qo‘shiladigan media yoki faylni yuboring: rasm, GIF, video, audio, voice, sticker va boshqalar. Media kerak bo‘lmasa /skip yozing. /cancel',
     );
   } else if (action === 'admins') {
     await renderAdmins(ctx, true);

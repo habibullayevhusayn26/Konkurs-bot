@@ -48,7 +48,7 @@ Katalogdagi sovg‘a uchun so‘rovlar soni cheklanmagan; bir xil katalog sovg�
 Bot egasi yoki qo‘shimcha admin shaxsiy chatda `/admin` yuboradi:
 
 - **Referral statistikasi** — foydalanuvchilar, tasdiqlangan takliflar va kutilayotgan so‘rovlar.
-- **Ommaviy xabar** — Telegram’da formatlab yuborilgan matn yoki rasm, GIF, video, audio va boshqa media fayllarni foydalanuvchilarga tarqating. Ixtiyoriy inline tugmalarga havola, botning `/start`, `/help`, `/balance`, `/invite`, `/prizes`, `/bonus` buyruqlaridan biri yoki qalqib chiquvchi xabar belgilanadi; har bir tugmaning ko‘k, yashil yoki qizil rangini tanlash va premium emoji belgisini qo‘shish mumkin. Yuborishdan oldin auditoriya soni ko‘rsatiladi va admin tasdiqlaydi.
+- **Ommaviy xabar** — avval media yoki fayl yuboring (`/skip` bilan mediasiz davom etish mumkin), keyin alohida matn kiriting; Telegram formatlashi va premium emoji saqlanadi. So‘ng inline tugmalarga havola, botning `/start`, `/help`, `/balance`, `/invite`, `/prizes`, `/bonus` buyruqlaridan biri yoki qalqib chiquvchi xabar belgilanadi; har bir tugmaning ko‘k, yashil yoki qizil rangini tanlash va premium emoji belgisini qo‘shish mumkin. Bot xabar preview’ini ko‘rsatib, auditoriya sonini bildiradi; admin tasdiqlagandan keyin yuboradi.
 - **NFT sovg‘alarini boshqarish** — haqiqiy NFT havolasini va ball narxini qo‘shish yoki katalogdan olib tashlash.
 - **Sovg‘a so‘rovlari** — foydalanuvchi so‘rovini qabul qilish yoki rad etish. So‘rov xabari barcha adminlarga bot orqali yuboriladi.
 - **Foydalanuvchini qidirish** — Telegram ID orqali foydalanuvchini topib, uning referral balansiga ball qo‘shish yoki yetarli balans bo‘lsa ayirish mumkin.
