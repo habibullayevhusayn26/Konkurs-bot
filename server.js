@@ -2325,7 +2325,7 @@ bot.use(async (ctx, next) => {
   const adminId = String(ctx.from.id);
   const admin = await isAdmin(ctx);
   if (admin && ctx.message && ownerSessions.has(adminId)
-    && ownerSessions.get(adminId).action.startsWith('broadcast_')) {
+    && (ctx.message.text || ownerSessions.get(adminId).action.startsWith('broadcast_'))) {
     if (await handleAdminInput(ctx)) return;
   }
 
