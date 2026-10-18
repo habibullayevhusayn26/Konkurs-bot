@@ -1617,6 +1617,13 @@ async function deliverBroadcast(ctx, session) {
     return [{ ...styled, callback_data: callbackData }];
   });
   const extra = rows.length ? { reply_markup: { inline_keyboard: rows } } : {};
+  const messageExtra = session.mediaMessageId
+    ? {
+      caption: session.caption,
+      ...(session.captionEntities.length ? { caption_entities: session.captionEntities } : {}),
+      ...extra,
+    }
+    : extra;
 
   let sent = 0;
   let failed = 0;
@@ -1637,15 +1644,16 @@ async function deliverBroadcast(ctx, session) {
           recipientId,
           session.sourceChatId,
           session.mediaMessageId,
-          session.mediaHasCaption ? { caption: '' } : {},
+          messageExtra,
+        );
+      } else {
+        await bot.telegram.copyMessage(
+          recipientId,
+          session.sourceChatId,
+          session.textMessageId,
+          extra,
         );
       }
-      await bot.telegram.copyMessage(
-        recipientId,
-        session.sourceChatId,
-        session.textMessageId,
-        extra,
-      );
       sent += 1;
     } catch (error) {
       failed += 1;
@@ -1674,7 +1682,7 @@ async function handleBroadcastAdminInput(ctx, session) {
       return true;
     }
     if (!message.photo && !message.video && !message.animation && !message.document
-      && !message.audio && !message.voice && !message.video_note && !message.sticker) {
+      && !message.audio && !message.voice) {
       await ctx.reply(
         '<tg-emoji emoji-id="5350693961281314631">🖼</tg-emoji> Xabar uchun rasm, video yoki GIF yuboring. Media shart emas:',
         { ...broadcastStartKeyboard(), parse_mode: 'HTML' },
@@ -1685,7 +1693,6 @@ async function handleBroadcastAdminInput(ctx, session) {
       action: 'broadcast_text',
       sourceChatId: ctx.chat.id,
       mediaMessageId: message.message_id,
-      mediaHasCaption: Boolean(message.caption),
     });
     await ctx.reply(
       '<tg-emoji emoji-id="5393314064220843793">💬</tg-emoji> Xabar matnini yuboring. Premium emoji foydalanishingiz mumkin:',
@@ -1694,14 +1701,17 @@ async function handleBroadcastAdminInput(ctx, session) {
     return true;
   }
   if (session.action === 'broadcast_text') {
-    if (!message.text || !message.text.trim() || message.text.length > 4096) {
-      await ctx.reply('Yuboriladigan matnni yuboring (1–4096 belgi). Matn formatlashi va premium emoji saqlanadi.');
+    const maxLength = session.mediaMessageId ? 1024 : 4096;
+    if (!message.text || !message.text.trim() || message.text.length > maxLength) {
+      await ctx.reply(`Yuboriladigan matnni yuboring (1–${maxLength} belgi). Matn formatlashi va premium emoji saqlanadi.`);
       return true;
     }
     ownerSessions.set(adminId, {
       ...session,
       action: 'broadcast_options',
       textMessageId: message.message_id,
+      caption: message.text,
+      captionEntities: message.entities || [],
       buttons: [],
     });
     await ctx.reply(
@@ -2552,22 +2562,27 @@ bot.action(/^broadcast:(.+)$/, async (ctx) => {
           ctx.chat.id,
           session.sourceChatId,
           session.mediaMessageId,
-          session.mediaHasCaption ? { caption: '' } : {},
+          {
+            caption: session.caption,
+            ...(session.captionEntities.length ? { caption_entities: session.captionEntities } : {}),
+            ...broadcastPreviewKeyboard(session.buttons),
+          },
+        );
+      } else {
+        await ctx.telegram.copyMessage(
+          ctx.chat.id,
+          session.sourceChatId,
+          session.textMessageId,
+          broadcastPreviewKeyboard(session.buttons),
         );
       }
-      await ctx.telegram.copyMessage(
-        ctx.chat.id,
-        session.sourceChatId,
-        session.textMessageId,
-        broadcastPreviewKeyboard(session.buttons),
-      );
       ownerSessions.set(adminId, { ...session, action: 'broadcast_confirm' });
       const blockedUsers = await collections.blockedUsers.find().project({ _id: 1 }).toArray();
       const recipientCount = await collections.campaignUsers.countDocuments({
         _id: { $nin: blockedUsers.map((user) => user._id) },
       });
       await ctx.reply(
-        `👁 Preview yuqorida ko‘rsatildi.\n\nXabar ${recipientCount} ta foydalanuvchiga yuborilsinmi?${session.mediaMessageId ? '\nMedia va matn ketma-ket yuboriladi.' : '\nFaqat matn yuboriladi.'}`,
+        `👁 Preview yuqorida ko‘rsatildi.\n\nXabar ${recipientCount} ta foydalanuvchiga yuborilsinmi?${session.mediaMessageId ? '\nMedia, izoh va tugmalar bitta xabar sifatida yuboriladi.' : '\nMatn va tugmalar bitta xabar sifatida yuboriladi.'}`,
         Markup.inlineKeyboard([[
           callbackButton('✅ Tasdiqlab yuborish', 'broadcast:send', 'success'),
           callbackButton('❌ Bekor qilish', 'broadcast:cancel', 'danger'),
