@@ -45,13 +45,17 @@ function createTextElement(tag, className, text) {
   return element;
 }
 
+function formatPrizeName(name, isPremium) {
+  return isPremium ? `⭐️ ${name.replace(/^(?:⭐️?\s*)+/u, '')}` : name;
+}
+
 function closeGiftDialog() {
   if (elements.dialog.open) elements.dialog.close();
 }
 
 function selectPrize(prize) {
   selectedPrize = prize;
-  elements.selectedName.textContent = prize.display_name;
+  elements.selectedName.textContent = formatPrizeName(prize.display_name, prize.type === 'premium');
   elements.selectedCost.textContent = `${formatter.format(prize.referrals_cost)} referral ball`;
   elements.selection.hidden = false;
   elements.request.hidden = false;
@@ -62,12 +66,12 @@ function openGiftDetails(prize) {
   const isPremium = prize.type === 'premium';
   elements.dialogImage.hidden = isPremium;
   elements.dialogPremium.hidden = !isPremium;
-  elements.dialogEdition.textContent = isPremium ? 'TELEGRAM PREMIUM' : 'DIGITAL COLLECTIBLE';
+  elements.dialogEdition.textContent = isPremium ? '⭐️ TELEGRAM PREMIUM' : 'DIGITAL COLLECTIBLE';
   elements.dialogImage.src = prize.image_url || '';
   elements.dialogImage.alt = prize.display_name;
-  elements.dialogName.textContent = prize.display_name;
+  elements.dialogName.textContent = formatPrizeName(prize.display_name, isPremium);
   elements.dialogModel.textContent = isPremium
-    ? `Telegram Premium · ${prize.premium_months} oy`
+    ? `⭐️ Telegram Premium · ${prize.premium_months} oy`
     : prize.model;
   elements.dialogCost.textContent = `${formatter.format(prize.referrals_cost)} referral ball`;
   const shortfall = prize.referrals_cost - campaign.referralBalance;
@@ -99,8 +103,9 @@ function renderGiftCatalog(prizes) {
   selectedPrize = null;
 
   if (campaign.giftRequest) {
+    const isPremiumRequest = campaign.giftRequest.prizeType === 'premium';
     elements.availability.textContent =
-      `Sizning ${campaign.giftRequest.prizeDisplayName} sovg‘a so‘rovingiz admin ko‘rib chiqishida. Katalogni ko‘rishingiz mumkin.`;
+      `${isPremiumRequest ? '⭐️ ' : ''}Sizning ${formatPrizeName(campaign.giftRequest.prizeDisplayName, isPremiumRequest)} sovg‘a so‘rovingiz admin ko‘rib chiqishida. Katalogni ko‘rishingiz mumkin.`;
   } else if (hasPrizes && !prizes.some((prize) => prize.referrals_cost <= campaign.referralBalance)) {
     elements.availability.textContent =
       'Barcha sovg‘alar va narxlari quyida ko‘rinadi. Balansingiz yetganda mos sovg‘ani tanlab so‘rov yuborishingiz mumkin.';
@@ -118,14 +123,14 @@ function renderGiftCatalog(prizes) {
     card.type = 'button';
     card.setAttribute(
       'aria-label',
-      `${prize.display_name}, ${formatter.format(prize.referrals_cost)} referral ball${shortfall > 0 ? `, yana ${formatter.format(shortfall)} ball kerak` : ''}. Tafsilotlarni ochish`,
+      `${formatPrizeName(prize.display_name, prize.type === 'premium')}, ${formatter.format(prize.referrals_cost)} referral ball${shortfall > 0 ? `, yana ${formatter.format(shortfall)} ball kerak` : ''}. Tafsilotlarni ochish`,
     );
     card.addEventListener('click', () => openGiftDetails(prize));
 
     const artwork = document.createElement('span');
     artwork.className = 'gift-artwork';
     if (prize.type === 'premium') {
-      artwork.append(createTextElement('span', 'gift-media-fallback premium-mark', '⭐ PREMIUM'));
+      artwork.append(createTextElement('span', 'gift-media-fallback premium-mark', '⭐️ PREMIUM'));
     } else {
       const image = document.createElement('img');
       image.src = prize.image_url;
@@ -143,12 +148,12 @@ function renderGiftCatalog(prizes) {
 
     const details = document.createElement('span');
     details.className = 'gift-details';
-    details.append(createTextElement('span', 'gift-name', prize.display_name));
+    details.append(createTextElement('span', 'gift-name', formatPrizeName(prize.display_name, prize.type === 'premium')));
     details.append(createTextElement(
       'span',
       'gift-type',
       prize.type === 'premium'
-        ? `${prize.premium_months} oy Premium · ${formatter.format(prize.referrals_cost)} ball`
+        ? `⭐️ ${prize.premium_months} oy Premium · ${formatter.format(prize.referrals_cost)} ball`
         : `${formatter.format(prize.referrals_cost)} referral ball`,
     ));
     if (shortfall > 0) {

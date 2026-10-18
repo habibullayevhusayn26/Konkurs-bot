@@ -51,6 +51,7 @@ async function initializeDatabase() {
   const database = mongoClient.db(process.env.MONGODB_DB || 'telegram_moderation');
   collections = {
     admins: database.collection('bot_admins'),
+    blockedUsers: database.collection('blocked_users'),
     channels: database.collection('required_channels'),
     campaignUsers: database.collection('campaign_users'),
     referrals: database.collection('qualified_referrals'),
@@ -83,11 +84,12 @@ async function getAdminIds() {
   return [...new Set([OWNER_ID, ...admins.map((admin) => admin._id)].filter(Boolean))];
 }
 
-async function notifyAdmins(text, keyboard) {
+async function notifyAdmins(text, keyboard, options = {}) {
   const adminIds = await getAdminIds();
+  const message = telegramMessage(text, options);
   const results = await Promise.all(adminIds.map(async (adminId) => {
     try {
-      await bot.telegram.sendMessage(Number(adminId), text, keyboard);
+      await bot.telegram.sendMessage(Number(adminId), message.text, { ...(keyboard || {}), ...message.options });
       return true;
     } catch (error) {
       console.error(`Could not notify admin ${adminId}:`, error);
@@ -95,6 +97,70 @@ async function notifyAdmins(text, keyboard) {
     }
   }));
   return results.some(Boolean);
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  })[character]);
+}
+
+const PREMIUM_EMOJI_ID = '5393380387105827492';
+
+function telegramMessage(text, options = {}) {
+  if (!/premium/i.test(text)) return { text, options };
+  const existingEntities = options.entities || [];
+  if (options.parse_mode === 'HTML') {
+    return {
+      text: `<tg-emoji emoji-id="${PREMIUM_EMOJI_ID}">⭐️</tg-emoji> ${text}`,
+      options,
+    };
+  }
+  if (options.parse_mode) return { text: `⭐️ ${text}`, options };
+  return {
+    text: `⭐️ ${text}`,
+    options: {
+      ...options,
+      entities: [
+        { type: 'custom_emoji', offset: 0, length: 2, custom_emoji_id: PREMIUM_EMOJI_ID },
+        ...existingEntities.map((entity) => ({ ...entity, offset: entity.offset + 2 })),
+      ],
+    },
+  };
+}
+
+async function replyText(ctx, text, extra) {
+  const message = telegramMessage(text, extra || {});
+  if (!/premium/i.test(text)) {
+    return extra === undefined ? ctx.reply(text) : ctx.reply(text, extra);
+  }
+  return ctx.reply(message.text, message.options);
+}
+
+async function editText(ctx, text, extra) {
+  const message = telegramMessage(text, extra || {});
+  if (!/premium/i.test(text)) {
+    return ctx.editMessageText(text, extra);
+  }
+  return ctx.editMessageText(message.text, message.options);
+}
+
+async function sendText(telegram, chatId, text, extra) {
+  const message = telegramMessage(text, extra || {});
+  if (!/premium/i.test(text)) {
+    return extra === undefined
+      ? telegram.sendMessage(chatId, text)
+      : telegram.sendMessage(chatId, text, extra);
+  }
+  return telegram.sendMessage(chatId, message.text, message.options);
+}
+
+async function isUserBlocked(userId) {
+  return Boolean(await collections.blockedUsers.findOne({ _id: String(userId) }));
 }
 
 function isSubscribedMember(member) {
@@ -180,6 +246,7 @@ async function ensureCampaignUser(user, referralPayload = '') {
       {
         $set: {
           first_name: user.first_name || '',
+          last_name: user.last_name || '',
           username: user.username || null,
           last_seen_at: new Date(),
         },
@@ -200,6 +267,7 @@ async function ensureCampaignUser(user, referralPayload = '') {
     _id: userId,
     user_id: userId,
     first_name: user.first_name || '',
+    last_name: user.last_name || '',
     username: user.username || null,
     referred_by: oldRecipient ? null : inviterId,
     campaign_new: !oldRecipient,
@@ -356,11 +424,13 @@ function startReferralPayload(ctx) {
 }
 
 function callbackButton(text, data, style = 'primary') {
-  return { ...Markup.button.callback(text, data), style };
+  const label = /premium/i.test(text) ? `⭐️ ${text.replace(/^(?:⭐️?\s*)+/u, '')}` : text;
+  return { ...Markup.button.callback(label, data), style };
 }
 
 function urlButton(text, url) {
-  return { ...Markup.button.url(text, url), style: 'primary' };
+  const label = /premium/i.test(text) ? `⭐️ ${text.replace(/^(?:⭐️?\s*)+/u, '')}` : text;
+  return { ...Markup.button.url(label, url), style: 'primary' };
 }
 
 function twoColumnKeyboard(rows) {
@@ -397,7 +467,7 @@ async function showWelcome(ctx) {
   const message = WEB_APP_URL
     ? '👋 Salom! Referral ball to‘plang va NFT yoki Telegram Premium yutib oling. Barcha imkoniyatlar bot ichida ham mavjud:'
     : '👋 Salom! Referral ball to‘plang va NFT yoki Telegram Premium yutib oling. WEB_APP_URL sozlanmagan, lekin botdagi funksiyalardan foydalanishingiz mumkin:';
-  await ctx.reply(message, mainMenuKeyboard());
+  await replyText(ctx, message, mainMenuKeyboard());
 }
 
 async function getCampaignStats(userId) {
@@ -421,6 +491,7 @@ async function getCampaignStats(userId) {
     giftRequest: pendingRequest ? {
       status: pendingRequest.status,
       prizeDisplayName: pendingRequest.prize_display_name,
+      prizeType: pendingRequest.prize_type,
     } : null,
     prizes,
     botLink,
@@ -437,6 +508,9 @@ function prizeTypeLabel(prize) {
 
 async function createGiftRequest(telegramUser, prizeId) {
   const userId = String(telegramUser.id);
+  if (await isUserBlocked(userId)) {
+    throw new HttpError(403, 'Admin sizning botdan foydalanishingizni cheklagan.');
+  }
   if (!await isSubscribedToRequiredChannels(telegramUser.id)) {
     throw new HttpError(403, 'Majburiy kanallarga obuna bo‘ling, so‘ng qayta urinib ko‘ring.');
   }
@@ -510,7 +584,7 @@ async function showBalance(ctx) {
   const pending = stats.giftRequest
     ? `\n\n⏳ Kutilayotgan so‘rov: ${stats.giftRequest.prizeDisplayName}`
     : '';
-  await ctx.reply(
+  await replyText(ctx,
     `💰 Referral balansingiz\n\n✅ Tasdiqlangan takliflar: ${stats.referralCount}\n🎟 Sarflashingiz mumkin: ${stats.referralBalance} ball${pending}`,
     mainMenuKeyboard(),
   );
@@ -541,7 +615,87 @@ async function showPrizeMenu(ctx) {
   const text = prizes.length
     ? '🎁 Yutish mumkin bo‘lgan sovg‘alar:\n\nHar bir sovg‘ani tanlab so‘rov yuboring. Admin tasdiqlagach NFT yoki Premium obunasini qo‘lda topshiradi.'
     : 'Hozircha sovg‘alar qo‘shilmagan. Keyinroq qayta tekshiring.';
-  await ctx.reply(text, twoColumnKeyboard(rows));
+  await replyText(ctx, text, twoColumnKeyboard(rows));
+}
+
+function formatUserDate(value) {
+  return value instanceof Date && !Number.isNaN(value.getTime())
+    ? value.toLocaleString('uz-UZ')
+    : 'Ma’lumot yo‘q';
+}
+
+async function renderCampaignUser(ctx, userId, edit = false) {
+  const [profile, referrals, requests, rewards, blockedRecord, admin] = await Promise.all([
+    collections.campaignUsers.findOne({ _id: userId }),
+    collections.referrals.countDocuments({ inviter_id: userId }),
+    collections.giftRequests.find({ user_id: userId }).sort({ created_at: -1 }).toArray(),
+    collections.rewards.find({ _id: userId }).toArray(),
+    collections.blockedUsers.findOne({ _id: userId }),
+    collections.admins.findOne({ _id: userId }),
+  ]);
+  const blocked = Boolean(blockedRecord);
+  const owner = userId === OWNER_ID;
+  const protectedAdmin = owner || Boolean(admin);
+  const referralSpent = requests
+    .filter((request) => request.status === 'approved' || request.status === 'pending')
+    .reduce((total, request) => total + (Number.isSafeInteger(request.referrals_cost) ? request.referrals_cost : 0), 0);
+  const referralBalance = Math.max(0, referrals - referralSpent);
+  let referredByText = 'Yo‘q';
+  if (profile && profile.referred_by) {
+    const referrer = await collections.campaignUsers.findOne({ _id: profile.referred_by });
+    const referrerName = referrer
+      ? [referrer.first_name, referrer.last_name].filter(Boolean).join(' ') || 'Foydalanuvchi'
+      : 'Noma’lum foydalanuvchi';
+    referredByText = `${referrerName} (ID: ${profile.referred_by})`;
+  }
+  const requestText = requests.length
+    ? `${requests.length} ta so‘rov (kutilmoqda: ${requests.filter((request) => request.status === 'pending').length}, qabul: ${requests.filter((request) => request.status === 'approved').length}, rad: ${requests.filter((request) => request.status === 'rejected').length})\n`
+      + requests.slice(0, 5).map((request) => `• ${prizeTypeLabel({
+      type: request.prize_type,
+      premium_months: request.premium_months,
+      display_name: request.prize_display_name,
+    })} — ${request.status}; ${request.referrals_cost} ball; ${formatUserDate(request.created_at)}`).join('\n')
+    : 'So‘rovlar yo‘q';
+  const rewardText = rewards.length
+    ? rewards.map((reward) => `• ${reward.prize_display_name || 'Gift'} — ${reward.status}; ${formatUserDate(reward.created_at)}`).join('\n')
+    : 'Eski giftlar yo‘q';
+  const name = profile
+    ? [profile.first_name, profile.last_name].filter(Boolean).join(' ') || 'Noma’lum'
+    : 'Botda qayd etilmagan';
+  const text = [
+    `👤 Foydalanuvchi ma’lumoti`,
+    `Ism: ${name}`,
+    `Username: ${profile && profile.username ? `@${profile.username}` : 'Mavjud emas'}`,
+    `Telegram ID: ${userId}`,
+    `Admin: ${protectedAdmin ? (owner ? 'Bot egasi' : 'Ha') : 'Yo‘q'}`,
+    `Holati: ${blocked ? `🚫 Bloklangan (${formatUserDate(blockedRecord.blocked_at)}, admin ID: ${blockedRecord.blocked_by})` : '✅ Faol'}`,
+    `Birinchi qayd: ${formatUserDate(profile && profile.created_at)}`,
+    `Oxirgi faollik: ${formatUserDate(profile && profile.last_seen_at)}`,
+    `Taklif qilgan: ${referredByText}`,
+    `Takliflari: ${referrals}`,
+    `Referral balansi: ${referralBalance}`,
+    `So‘nggi sovg‘a so‘rovlari:\n${requestText}`,
+    `Eski mukofotlar:\n${rewardText}`,
+  ].join('\n');
+  const rows = [];
+  if (!protectedAdmin) {
+    rows.push([callbackButton(
+      blocked ? '✅ Blokdan chiqarish' : '🚫 Foydalanuvchini bloklash',
+      `admin:user_${blocked ? 'unblock' : 'block'}:${userId}`,
+      blocked ? 'success' : 'danger',
+    )]);
+  }
+  rows.push([
+    callbackButton('🔄 Yangilash', `admin:user_view:${userId}`),
+    callbackButton('🔎 Boshqa ID', 'admin:user_search'),
+  ]);
+  rows.push([callbackButton('⬅️ Admin panel', 'admin:panel')]);
+  const keyboard = twoColumnKeyboard(rows);
+  if (edit && ctx.callbackQuery && ctx.callbackQuery.message) {
+    await editText(ctx, text, keyboard);
+  } else {
+    await replyText(ctx, text, keyboard);
+  }
 }
 
 function sendJson(res, status, value) {
@@ -649,6 +803,9 @@ async function handleHttpRequest(req, res) {
       throw new HttpError(400, 'JSON so‘rovi noto‘g‘ri.');
     }
     const telegramUser = validateWebAppInitData(body.initData);
+    if (await isUserBlocked(telegramUser.id)) {
+      throw new HttpError(403, 'Admin sizning botdan foydalanishingizni cheklagan.');
+    }
     await ensureCampaignUser(telegramUser);
     const subscribed = await isSubscribedToRequiredChannels(telegramUser.id);
     if (!subscribed) {
@@ -670,6 +827,9 @@ async function handleHttpRequest(req, res) {
       throw new HttpError(400, 'JSON so‘rovi noto‘g‘ri.');
     }
     const telegramUser = validateWebAppInitData(body.initData);
+    if (await isUserBlocked(telegramUser.id)) {
+      throw new HttpError(403, 'Admin sizning botdan foydalanishingizni cheklagan.');
+    }
     if (typeof body.prizeId !== 'string' || !/^[a-z0-9-]{1,100}$/i.test(body.prizeId)) {
       throw new HttpError(400, 'Tanlangan sovg‘a noto‘g‘ri.');
     }
@@ -712,6 +872,7 @@ function ownerPanelKeyboard(includeAdminManagement = false) {
     [callbackButton('🎁 Sovg‘a so‘rovlari', 'admin:gift_requests')],
     [callbackButton('🎁 Kutilayotgan giftlar', 'admin:rewards')],
     [callbackButton('📢 Majburiy obuna kanallari', 'admin:channels')],
+    [callbackButton('🔎 Foydalanuvchini qidirish', 'admin:user_search')],
   ];
   if (includeAdminManagement) rows.push([callbackButton('👥 Adminlarni boshqarish', 'admin:admins')]);
   return twoColumnKeyboard(rows);
@@ -738,9 +899,9 @@ async function renderAdmins(ctx, edit = false) {
     ? `👥 Qo‘shimcha adminlar (${admins.length}):\n${admins.map((admin) => `• ${admin._id}`).join('\n')}\n\nBot egasining huquqlari alohida va o‘zgarmaydi.`
     : '👥 Hozircha qo‘shimcha admin yo‘q. Bot egasi barcha admin huquqlarini saqlab qoladi.';
   if (edit && ctx.callbackQuery && ctx.callbackQuery.message) {
-    await ctx.editMessageText(text, twoColumnKeyboard(rows));
+    await editText(ctx, text, twoColumnKeyboard(rows));
   } else {
-    await ctx.reply(text, twoColumnKeyboard(rows));
+    await replyText(ctx, text, twoColumnKeyboard(rows));
   }
 }
 
@@ -786,9 +947,9 @@ async function renderPrizes(ctx, edit = false) {
     ? `Sovg‘alar katalogi (${prizes.length}):\n\n${prizes.map((prize, index) => `${index + 1}. ${prizeTypeLabel(prize)} — ${prize.referrals_cost || 1} referral ball${prize.telegram_url ? `\n${prize.telegram_url}` : ''}`).join('\n\n')}\n\nNFT va Premium sovg‘alari admin tomonidan qo‘lda topshiriladi.`
     : '🎁 Hozircha sovg‘alar qo‘shilmagan. NFT havolasini yoki Telegram Premium obuna muddatini qo‘shing.';
   if (edit && ctx.callbackQuery && ctx.callbackQuery.message) {
-    await ctx.editMessageText(text, twoColumnKeyboard(rows));
+    await editText(ctx, text, twoColumnKeyboard(rows));
   } else {
-    await ctx.reply(text, twoColumnKeyboard(rows));
+    await replyText(ctx, text, twoColumnKeyboard(rows));
   }
 }
 
@@ -808,9 +969,9 @@ async function showPendingRewards(ctx, edit = false) {
   ]);
   rows.push([callbackButton('⬅️ Panelga qaytish', 'admin:panel')]);
   if (edit && ctx.callbackQuery && ctx.callbackQuery.message) {
-    await ctx.editMessageText(text, twoColumnKeyboard(rows));
+    await editText(ctx, text, twoColumnKeyboard(rows));
   } else {
-    await ctx.reply(text, twoColumnKeyboard(rows));
+    await replyText(ctx, text, twoColumnKeyboard(rows));
   }
 }
 
@@ -831,9 +992,9 @@ async function showGiftRequests(ctx, edit = false) {
   ]);
   rows.push([callbackButton('Panelga qaytish', 'admin:panel')]);
   if (edit && ctx.callbackQuery && ctx.callbackQuery.message) {
-    await ctx.editMessageText(text, twoColumnKeyboard(rows));
+    await editText(ctx, text, twoColumnKeyboard(rows));
   } else {
-    await ctx.reply(text, twoColumnKeyboard(rows));
+    await replyText(ctx, text, twoColumnKeyboard(rows));
   }
 }
 
@@ -880,7 +1041,7 @@ async function handleAdminInput(ctx) {
         { upsert: true },
       );
       ownerSessions.delete(adminId);
-      await ctx.reply(result.upsertedCount
+      await replyText(ctx, result.upsertedCount
         ? `${prize.display_name} NFT ${referralsCost} referral ball narxi bilan qo‘shildi.`
         : `${prize.display_name} NFT narxi ${referralsCost} referral ball qilib saqlandi.`);
       await renderPrizes(ctx);
@@ -892,7 +1053,7 @@ async function handleAdminInput(ctx) {
   if (session.action === 'premium_months') {
     const months = Number(text.trim());
     if (![1, 3, 6, 12].includes(months)) {
-      await ctx.reply('Premium muddati 1, 3, 6 yoki 12 oy bo‘lishi mumkin. Qayta kiriting yoki /cancel yozing.');
+      await replyText(ctx, 'Premium muddati 1, 3, 6 yoki 12 oy bo‘lishi mumkin. Qayta kiriting yoki /cancel yozing.');
       return true;
     }
     const prize = {
@@ -903,7 +1064,7 @@ async function handleAdminInput(ctx) {
       display_name: `Telegram Premium — ${months} oy`,
     };
     ownerSessions.set(adminId, { action: 'premium_price', prize });
-    await ctx.reply(`${months} oylik Telegram Premium uchun referral ball narxini yuboring (1–1 000 000). /cancel`);
+    await replyText(ctx, `${months} oylik Telegram Premium uchun referral ball narxini yuboring (1–1 000 000). /cancel`);
     return true;
   }
   if (session.action === 'premium_price') {
@@ -928,7 +1089,7 @@ async function handleAdminInput(ctx) {
         : `${prize.display_name} narxi ${referralsCost} referral ball qilib saqlandi.`);
       await renderPrizes(ctx);
     } catch (error) {
-      await ctx.reply(`Premium sovg‘ani saqlab bo‘lmadi: ${error.message}. Qayta yuboring yoki /cancel yozing.`);
+      await replyText(ctx, `Premium sovg‘ani saqlab bo‘lmadi: ${error.message}. Qayta yuboring yoki /cancel yozing.`);
     }
     return true;
   }
@@ -948,6 +1109,16 @@ async function handleAdminInput(ctx) {
     ownerSessions.delete(adminId);
     await ctx.reply(`✅ ${newAdminId} admin sifatida qo‘shildi.`);
     await renderAdmins(ctx);
+    return true;
+  }
+  if (session.action === 'user_search') {
+    const userId = text.trim();
+    if (!/^\d{1,20}$/.test(userId) || !Number.isSafeInteger(Number(userId)) || Number(userId) < 1) {
+      await ctx.reply('Telegram ID raqamli va to‘g‘ri bo‘lishi kerak. ID’ni qayta kiriting yoki /cancel yozing.');
+      return true;
+    }
+    ownerSessions.delete(adminId);
+    await renderCampaignUser(ctx, String(Number(userId)));
     return true;
   }
   if (session.action === 'channel_add' || session.action === 'channel_edit') {
@@ -978,8 +1149,22 @@ bot.use(async (ctx, next) => {
     : '';
   const newCampaignUser = await ensureCampaignUser(ctx.from, referralPayload);
   if (newCampaignUser && isStartCommand) {
-    const displayName = `${ctx.from.first_name || 'Foydalanuvchi'}${ctx.from.username ? ` (@${ctx.from.username})` : ''}`;
-    await notifyAdmins(`🆕 Yangi obunachi botni ishga tushirdi.\n\nFoydalanuvchi: ${displayName}\nTelegram ID: ${adminId}`);
+    const displayName = [ctx.from.first_name, ctx.from.last_name].filter(Boolean).join(' ') || 'Foydalanuvchi';
+    const userLink = `<a href="tg://user?id=${adminId}">${escapeHtml(displayName)}</a>`;
+    const username = ctx.from.username ? `\nUsername: @${escapeHtml(ctx.from.username)}` : '';
+    await notifyAdmins(
+      `🆕 Yangi obunachi botni ishga tushirdi.\n\nFoydalanuvchi: ${userLink}${username}\nTelegram ID: ${adminId}`,
+      undefined,
+      { parse_mode: 'HTML' },
+    );
+  }
+  if (!admin && await isUserBlocked(adminId)) {
+    if (ctx.callbackQuery) {
+      await ctx.answerCbQuery('🚫 Admin sizning botdan foydalanishingizni cheklagan.', { show_alert: true });
+    } else {
+      await ctx.reply('🚫 Admin sizning botdan foydalanishingizni cheklagan.');
+    }
+    return;
   }
   if (admin || (ctx.callbackQuery && ctx.callbackQuery.data === 'subscription:check')) {
     await next();
@@ -1024,7 +1209,7 @@ bot.start(async (ctx) => {
 });
 
 bot.command('help', async (ctx) => {
-  await ctx.reply('Botda /balance orqali ballaringizni ko‘ring, /invite orqali taklif havolasini oling va /prizes orqali NFT yoki Telegram Premium so‘rang. Yoki quyidagi menyudan foydalaning:', mainMenuKeyboard());
+  await replyText(ctx, 'Botda /balance orqali ballaringizni ko‘ring, /invite orqali taklif havolasini oling va /prizes orqali NFT yoki Telegram Premium so‘rang. Yoki quyidagi menyudan foydalaning:', mainMenuKeyboard());
 });
 
 bot.command('balance', showBalance);
@@ -1068,7 +1253,7 @@ bot.action(/^menu:(.+)$/, async (ctx) => {
     try {
       const request = await createGiftRequest(ctx.from, prize._id);
       await ctx.answerCbQuery(request.notified ? '✅ So‘rov adminga yuborildi.' : 'So‘rov saqlandi, ammo adminlarga xabar yetmadi.', { show_alert: true });
-      await ctx.reply(`${prizeTypeLabel(prize)} uchun so‘rovingiz qabul qilindi. Admin sovg‘ani sizga topshiradi.`, mainMenuKeyboard());
+      await replyText(ctx, `${prizeTypeLabel(prize)} uchun so‘rovingiz qabul qilindi. Admin sovg‘ani sizga topshiradi.`, mainMenuKeyboard());
     } catch (error) {
       if (!(error instanceof HttpError)) throw error;
       await ctx.answerCbQuery(error.message, { show_alert: true });
@@ -1113,6 +1298,50 @@ bot.action(/^admin:(.+)$/, async (ctx) => {
     || action.startsWith('admin_remove:');
   if (ownerOnly && !isOwner(ctx)) {
     await ctx.answerCbQuery('⛔ Bu amal faqat bot egasi uchun.', { show_alert: true });
+    return;
+  }
+  if (action === 'user_search') {
+    await ctx.answerCbQuery();
+    ownerSessions.set(String(ctx.from.id), { action: 'user_search' });
+    await ctx.reply('Qidirmoqchi bo‘lgan foydalanuvchining raqamli Telegram ID’sini yuboring. Bekor qilish: /cancel');
+    return;
+  }
+  if (action.startsWith('user_view:')) {
+    const userId = action.slice('user_view:'.length);
+    if (!/^\d{1,20}$/.test(userId) || !Number.isSafeInteger(Number(userId)) || Number(userId) < 1) {
+      await ctx.answerCbQuery('Telegram ID noto‘g‘ri.', { show_alert: true });
+      return;
+    }
+    const normalizedUserId = String(Number(userId));
+    await ctx.answerCbQuery();
+    await renderCampaignUser(ctx, normalizedUserId, true);
+    return;
+  }
+  if (action.startsWith('user_block:') || action.startsWith('user_unblock:')) {
+    const shouldBlock = action.startsWith('user_block:');
+    const userId = action.slice(shouldBlock ? 'user_block:'.length : 'user_unblock:'.length);
+    if (!/^\d{1,20}$/.test(userId) || !Number.isSafeInteger(Number(userId)) || Number(userId) < 1) {
+      await ctx.answerCbQuery('Telegram ID noto‘g‘ri.', { show_alert: true });
+      return;
+    }
+    const normalizedUserId = String(Number(userId));
+    const protectedAdmin = normalizedUserId === OWNER_ID
+      || Boolean(await collections.admins.findOne({ _id: normalizedUserId }));
+    if (protectedAdmin) {
+      await ctx.answerCbQuery('⛔ Bot egasi va adminlarni bloklab bo‘lmaydi.', { show_alert: true });
+      return;
+    }
+    if (shouldBlock) {
+      await collections.blockedUsers.updateOne(
+        { _id: normalizedUserId },
+        { $setOnInsert: { _id: normalizedUserId, blocked_at: new Date(), blocked_by: String(ctx.from.id) } },
+        { upsert: true },
+      );
+    } else {
+      await collections.blockedUsers.deleteOne({ _id: normalizedUserId });
+    }
+    await ctx.answerCbQuery(shouldBlock ? 'Foydalanuvchi bloklandi.' : 'Foydalanuvchi blokdan chiqarildi.');
+    await renderCampaignUser(ctx, normalizedUserId, true);
     return;
   }
   await ctx.answerCbQuery();
@@ -1168,7 +1397,7 @@ bot.action(/^admin:(.+)$/, async (ctx) => {
     );
   } else if (action === 'premium_add') {
     ownerSessions.set(String(ctx.from.id), { action: 'premium_months' });
-    await ctx.reply('Telegram Premium obuna muddatini yuboring: 1, 3, 6 yoki 12 oy. Keyin referral ball narxini belgilaysiz. Admin tasdiqlagach Premium’ni qo‘lda sovg‘a qiladi. Bekor qilish: /cancel');
+    await replyText(ctx, 'Telegram Premium obuna muddatini yuboring: 1, 3, 6 yoki 12 oy. Keyin referral ball narxini belgilaysiz. Admin tasdiqlagach Premium’ni qo‘lda sovg‘a qiladi. Bekor qilish: /cancel');
   } else if (action.startsWith('gift_request_approve:') || action.startsWith('gift_request_reject:')) {
     const approve = action.startsWith('gift_request_approve:');
     const requestId = action.slice(approve
@@ -1203,7 +1432,7 @@ bot.action(/^admin:(.+)$/, async (ctx) => {
       : `${itemName} sovg‘a so‘rovingiz rad etildi. Referral ballaringiz sarflanmadi.`;
     let userNotified = true;
     try {
-      await bot.telegram.sendMessage(Number(giftRequest.user_id), userMessage);
+      await sendText(bot.telegram, Number(giftRequest.user_id), userMessage);
     } catch (error) {
       userNotified = false;
       console.error(`Could not notify user ${giftRequest.user_id} about gift request ${requestId}:`, error);
