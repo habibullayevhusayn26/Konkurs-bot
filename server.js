@@ -53,7 +53,6 @@ const mongoClient = new MongoClient(MONGODB_URI);
 const bot = new Telegraf(BOT_TOKEN);
 const ownerSessions = new Map();
 const supportSessions = new Map();
-const SUPPORT_BUTTON_EMOJI_ID = '5116275208906343429';
 const SUPPORT_PROMPT_EMOJI_ID = '4915853119839011973';
 const CHANNEL_BOOST_BONUS_POINTS = 3;
 let collections;
@@ -250,6 +249,7 @@ const BUTTON_EMOJI_IDS = new Map(Object.entries({
   '🟢': '5974259690094206575',
   '🔴': '5974259690094206575',
   '🚀': '5348584939065482800',
+  '🆘': '5974355442095104060',
   '❓': '5231463659099695141',
   '💰': '5278565208225257317',
   '🤝': '5343716911463045555',
@@ -1011,6 +1011,7 @@ function subscriptionKeyboard(channels) {
     urlButton(`📢 ${channel.title || channel.channel_id}`, channel.invite_url),
   ]);
   rows.push([callbackButton('Obunani tekshirish', 'subscription:check', 'success')]);
+  rows.push([callbackButton('🆘 SUPPORT', 'support:start', 'danger')]);
   return twoColumnKeyboard(rows);
 }
 
@@ -1022,7 +1023,6 @@ async function showSubscriptionPrompt(ctx) {
     '📣',
   );
   await replyText(ctx, text, { ...subscriptionKeyboard(await getRequiredChannels()), parse_mode: 'HTML' });
-  await showSupportReplyKeyboard(ctx);
 }
 
 function mainMenuKeyboard() {
@@ -1045,21 +1045,8 @@ function mainMenuKeyboard() {
   rows.push([callbackButton('👥 Do‘stni taklif qilish', 'menu:invite')]);
   rows.push([callbackButton('Sotib olish', 'purchase:home')]);
   rows.push([callbackButton('Bonuslar', 'bonus:home', 'success')]);
+  rows.push([callbackButton('🆘 SUPPORT', 'support:start', 'danger')]);
   return twoColumnKeyboard(rows);
-}
-
-function supportReplyKeyboard() {
-  return Markup.keyboard([[
-    {
-      text: 'SUPPORT',
-      icon_custom_emoji_id: SUPPORT_BUTTON_EMOJI_ID,
-      style: 'danger',
-    },
-  ]]).resize().persistent();
-}
-
-async function showSupportReplyKeyboard(ctx) {
-  await ctx.reply('\u2063', supportReplyKeyboard());
 }
 
 async function deliverSupportMessage(ctx) {
@@ -1123,7 +1110,6 @@ async function showWelcome(ctx) {
     addMessageEmoji(message, 'Salom!', MESSAGE_EMOJI_IDS.greeting, '🙂'),
     { ...mainMenuKeyboard(), parse_mode: 'HTML' },
   );
-  await showSupportReplyKeyboard(ctx);
 }
 
 async function getCampaignStats(userId) {
@@ -2720,7 +2706,8 @@ bot.use(async (ctx, next) => {
       );
     }
   }
-  if (admin || (ctx.callbackQuery && ctx.callbackQuery.data === 'subscription:check')) {
+  if (admin || (ctx.callbackQuery
+    && ['subscription:check', 'support:start'].includes(ctx.callbackQuery.data))) {
     await next();
     return;
   }
@@ -2767,7 +2754,6 @@ bot.start(async (ctx) => {
       { $unset: { pending_promo_id: '' } },
     );
     await reportPromoRedemption(ctx, promoId);
-    await showSupportReplyKeyboard(ctx);
     return;
   }
   await showWelcome(ctx);
@@ -2790,6 +2776,15 @@ bot.command('balance', showBalance);
 bot.command('invite', showInviteLink);
 bot.command('prizes', showPrizeMenu);
 bot.command('bonus', showBonusMenu);
+bot.action('support:start', async (ctx) => {
+  supportSessions.set(String(ctx.from.id), Date.now() + 15 * 60 * 1000);
+  await ctx.answerCbQuery();
+  await ctx.reply(
+    `${customEmojiTag(SUPPORT_PROMPT_EMOJI_ID, '⚠️')} Xabaringizni yuboring. Matn, rasm va izoh, video, audio yoki uzatilgan xabarni yuborishingiz mumkin.`,
+    { parse_mode: 'HTML' },
+  );
+});
+
 bot.action(/^purchase:(.+)$/, async (ctx) => {
   const action = ctx.match[1];
   if (action === 'home') {
