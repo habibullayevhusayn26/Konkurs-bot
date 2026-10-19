@@ -191,6 +191,8 @@ function escapeHtml(value) {
 }
 
 const PREMIUM_EMOJI_ID = '5352643623030657164';
+const WELCOME_MESSAGE_COOLDOWN_MS = 60 * 1000;
+const recentWelcomeMessages = new Map();
 const PREMIUM_PURCHASES = new Map([
   [3, 1000],
   [6, 1500],
@@ -1106,6 +1108,13 @@ async function deliverSupportMessage(ctx) {
 }
 
 async function showWelcome(ctx) {
+  const userId = String(ctx.from.id);
+  const now = Date.now();
+  const lastWelcomeAt = recentWelcomeMessages.get(userId) || 0;
+  if (now - lastWelcomeAt < WELCOME_MESSAGE_COOLDOWN_MS) {
+    return;
+  }
+  recentWelcomeMessages.set(userId, now);
   const message = WEB_APP_URL
     ? 'Salom! Referral ball to‘plang va NFT yoki Telegram Premium yutib oling. Barcha imkoniyatlar bot ichida ham mavjud:'
     : 'Salom! Referral ball to‘plang va NFT yoki Telegram Premium yutib oling. WEB_APP_URL sozlanmagan, lekin botdagi funksiyalardan foydalanishingiz mumkin:';
